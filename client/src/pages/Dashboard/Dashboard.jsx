@@ -435,7 +435,7 @@ const Dashboard = () => {
       {/* HEADER */}
       <header className="header">
         <div className="header-left">
-          <img src="/cel_logo.png" alt="CEL · ICMR" className="header-logo" />
+          <img src={`${import.meta.env.BASE_URL}cel_logo.png`} alt="CEL · ICMR" className="header-logo" />
           <div className="header-divider" />
           <div>
             <div className="header-title">KMC Programme — Executive Dashboard</div>
