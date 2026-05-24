@@ -4,7 +4,7 @@ import Dashboard from './pages/Dashboard/Dashboard';
 
 function App() {
   return (
-    <Router basename="/ikmc_dashboard">
+    <Router basename={import.meta.env.BASE_URL}>
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<Dashboard />} />

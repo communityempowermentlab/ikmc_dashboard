@@ -225,6 +225,10 @@
 .dashboard-container .ip-positive { color: #86efac; }
 .dashboard-container .ip-info     { color: #93c5fd; }
 
+/* Desktop/mobile visibility — controls which insight component shows per breakpoint */
+.dashboard-container .insight-desktop-only { display: flex; flex: 1; min-width: 0; }
+.dashboard-container .insight-mobile-only  { display: none; }
+
 /* Legacy pill classes kept for any other use */
 .dashboard-container .pill-red   { background: var(--red-bg);   color: var(--red);   border: 1px solid var(--red-border);   border-radius: 99px; padding: 3px 10px; font-size: 12px; }
 .dashboard-container .pill-amber { background: var(--amber-bg); color: var(--amber); border: 1px solid var(--amber-border); border-radius: 99px; padding: 3px 10px; font-size: 12px; }
@@ -883,15 +887,59 @@
 @media (max-width: 768px) {
   /* Header */
   .dashboard-container .header { padding: 12px 16px; }
-  .dashboard-container .header-right { width: 100%; justify-content: flex-start; flex-direction: column; align-items: flex-start; gap: 12px; }
   .dashboard-container .header-logo { height: 28px; }
   .dashboard-container .header-divider { display: none; }
 
-  /* Insight ticker */
-  .dashboard-container .insight-bar { height: auto; min-height: 42px; flex-wrap: wrap; position: static; }
-  .dashboard-container .insight-label-panel { padding: 8px 14px; border-right: none; border-bottom: 1px solid rgba(255,255,255,0.08); width: 100%; box-sizing: border-box; }
-  .dashboard-container .insight-badges { flex-wrap: wrap; }
-  .dashboard-container .insight-ticker-wrap { width: 100%; height: 38px; }
+  /* Filter + Export PDF on same horizontal row */
+  .dashboard-container .header-right {
+    width: 100%;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: nowrap;
+  }
+  .dashboard-container .header-right > *:first-child { flex: 1; min-width: 0; }
+  .dashboard-container .btn-export { flex-shrink: 0; white-space: nowrap; }
+
+  /* Insight bar — compact single-row, desktop ticker replaced by rotating card */
+  .dashboard-container .insight-bar { height: 42px; min-height: unset; flex-wrap: nowrap; position: static; }
+  .dashboard-container .insight-label-panel { padding: 0 10px; border-right: 1px solid rgba(255,255,255,0.1); border-bottom: none; width: auto; gap: 5px; }
+  .dashboard-container .insight-badges { display: none; }
+
+  /* Swap desktop/mobile insight components */
+  .dashboard-container .insight-desktop-only { display: none !important; }
+  .dashboard-container .insight-mobile-only  { display: flex; }
+
+  /* Mobile rotating insight card */
+  .dashboard-container .insight-mobile-rotator {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 10px 0 4px;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    min-width: 0;
+    overflow: hidden;
+    transition: opacity 0.28s ease;
+  }
+  .dashboard-container .imr-in  { opacity: 1; }
+  .dashboard-container .imr-out { opacity: 0; }
+  .dashboard-container .imr-msg {
+    flex: 1;
+    font-size: 11.5px;
+    line-height: 1.3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #e2e8f0;
+  }
+  .dashboard-container .imr-nav { display: flex; align-items: center; gap: 3px; flex-shrink: 0; }
+  .dashboard-container .imr-counter { font-size: 10px; opacity: 0.5; color: #94a3b8; font-family: var(--mono, monospace); }
+  .dashboard-container .imr-arrow { font-size: 16px; color: #94a3b8; opacity: 0.6; }
 
   /* Main layout */
   .dashboard-container .main { padding: 12px 12px 28px; gap: 12px; }
