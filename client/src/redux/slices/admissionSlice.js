@@ -57,16 +57,52 @@ export const fetchEarlyCareKpi = createAsyncThunk(
   }
 );
 
+export const fetchTransportKpi = createAsyncThunk(
+  'admissions/fetchTransport',
+  async (args) => {
+    const response = await axios.get(`${API_URL}/v1/admissions/transport?${buildParams(args)}`);
+    return response.data;
+  }
+);
+
+export const fetchKmcDurationTrend = createAsyncThunk(
+  'admissions/fetchKmcDuration',
+  async (args) => {
+    const response = await axios.get(`${API_URL}/v1/admissions/kmcDuration?${buildParams(args)}`);
+    return response.data;
+  }
+);
+
+export const fetchGenderComposition = createAsyncThunk(
+  'admissions/fetchGender',
+  async (args) => {
+    const response = await axios.get(`${API_URL}/v1/admissions/gender?${buildParams(args)}`);
+    return response.data;
+  }
+);
+
+export const fetchSummaryTable = createAsyncThunk(
+  'admissions/fetchSummary',
+  async (args) => {
+    const response = await axios.get(`${API_URL}/v1/admissions/summary?${buildParams(args)}`);
+    return response.data;
+  }
+);
+
 const admissionSlice = createSlice({
   name: 'admissions',
   initialState: {
-    kpi:         null,
-    trend:       [],
-    composition: null,
-    birthWeight: null,
-    discharge:   null,
-    earlyCare:   null,
-    loading: { kpi: false, trend: false, composition: false, birthWeight: false, discharge: false, earlyCare: false },
+    kpi:          null,
+    trend:        [],
+    composition:  null,
+    birthWeight:  null,
+    discharge:    null,
+    earlyCare:    null,
+    transport:    null,
+    kmcDuration:  [],
+    gender:       null,
+    summaryTable: null,
+    loading: { kpi: false, trend: false, composition: false, birthWeight: false, discharge: false, earlyCare: false, transport: false, kmcDuration: false, gender: false, summary: false },
     error: null,
   },
   reducers: {},
@@ -94,7 +130,23 @@ const admissionSlice = createSlice({
 
       .addCase(fetchEarlyCareKpi.pending,   (s) => { s.loading.earlyCare = true;  s.error = null; })
       .addCase(fetchEarlyCareKpi.fulfilled, (s, a) => { s.loading.earlyCare = false; s.earlyCare = a.payload; })
-      .addCase(fetchEarlyCareKpi.rejected,  (s, a) => { s.loading.earlyCare = false; s.error = a.error.message; });
+      .addCase(fetchEarlyCareKpi.rejected,  (s, a) => { s.loading.earlyCare = false; s.error = a.error.message; })
+
+      .addCase(fetchTransportKpi.pending,   (s) => { s.loading.transport = true;  s.error = null; })
+      .addCase(fetchTransportKpi.fulfilled, (s, a) => { s.loading.transport = false; s.transport = a.payload; })
+      .addCase(fetchTransportKpi.rejected,  (s, a) => { s.loading.transport = false; s.error = a.error.message; })
+
+      .addCase(fetchKmcDurationTrend.pending,   (s) => { s.loading.kmcDuration = true;  s.error = null; })
+      .addCase(fetchKmcDurationTrend.fulfilled, (s, a) => { s.loading.kmcDuration = false; s.kmcDuration = a.payload; })
+      .addCase(fetchKmcDurationTrend.rejected,  (s, a) => { s.loading.kmcDuration = false; s.error = a.error.message; })
+
+      .addCase(fetchGenderComposition.pending,   (s) => { s.loading.gender = true;  s.error = null; })
+      .addCase(fetchGenderComposition.fulfilled, (s, a) => { s.loading.gender = false; s.gender = a.payload; })
+      .addCase(fetchGenderComposition.rejected,  (s, a) => { s.loading.gender = false; s.error = a.error.message; })
+
+      .addCase(fetchSummaryTable.pending,   (s) => { s.loading.summary = true;  s.error = null; })
+      .addCase(fetchSummaryTable.fulfilled, (s, a) => { s.loading.summary = false; s.summaryTable = a.payload; })
+      .addCase(fetchSummaryTable.rejected,  (s, a) => { s.loading.summary = false; s.error = a.error.message; });
   },
 });
 

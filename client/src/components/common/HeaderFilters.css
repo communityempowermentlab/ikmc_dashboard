@@ -15,9 +15,10 @@
 
 @media (max-width: 768px) {
   .hf-bar {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 6px;
-    width: 100%;
+    flex-direction: row;
+    align-items: center;
+    width: auto;
+    flex: 1;
+    min-width: 0;
   }
 }

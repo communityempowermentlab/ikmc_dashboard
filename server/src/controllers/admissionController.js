@@ -373,3 +373,326 @@ exports.getEarlyCareKpi = async (req, res) => {
         res.status(500).json({ error: 'Server error fetching early care KPI' });
     }
 };
+
+// ── TRANSPORT KPI ─────────────────────────────────────────────────────────────
+// GET /api/v1/admissions/transport?facilityIds=228&months=2026-01&loungeIds=222
+// Returns baby-transportation-in-KMC-position split: Mother (11) vs Surrogate (12),
+// overall and Inborn-only.
+exports.getTransportKpi = async (req, res) => {
+    try {
+        const { facilityIds: fParam, months: mParam, loungeIds: lParam } = req.query;
+        if (!fParam || !mParam) return res.status(400).json({ error: 'facilityIds and months are required' });
+
+        const facilityIds = parseIds(fParam);
+        const months      = parseMonths(mParam);
+        const loungeIds   = parseIds(lParam);
+
+        const { clause: fClause, params: fParams } = buildFacilityClause(facilityIds);
+        const { clause: mClause, params: mParams } = buildMonthClause(months);
+        let where = `${fClause} AND ba.status IN (1, 2) AND ${mClause}
+                     AND ba.babyTransferredCondition IN (11, 12)`;
+        const params = [...fParams, ...mParams];
+        const lClause = buildLoungeClause(loungeIds);
+        if (lClause) { where += ` AND ${lClause.clause}`; params.push(...lClause.params); }
+
+        const [rows] = await pool.query(
+            `SELECT ba.typeOfBorn, ba.babyTransferredCondition, COUNT(*) AS count
+             FROM babyAdmission ba
+             JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
+             WHERE ${where}
+             GROUP BY ba.typeOfBorn, ba.babyTransferredCondition`,
+            params
+        );
+
+        let overallMother = 0, overallSurrogate = 0;
+        let inbornMother  = 0, inbornSurrogate  = 0;
+
+        for (const row of rows) {
+            const n = parseInt(row.count);
+            const isMother = parseInt(row.babyTransferredCondition) === 11;
+            const isInborn = row.typeOfBorn === 'Inborn';
+            if (isMother) { overallMother    += n; if (isInborn) inbornMother    += n; }
+            else          { overallSurrogate  += n; if (isInborn) inbornSurrogate += n; }
+        }
+
+        const pct = (part, total) => total > 0 ? parseFloat(((part / total) * 100).toFixed(1)) : 0;
+        const overallTotal = overallMother + overallSurrogate;
+        const inbornTotal  = inbornMother  + inbornSurrogate;
+
+        res.json({
+            overall: {
+                mother:    { count: overallMother,    pct: pct(overallMother,    overallTotal) },
+                surrogate: { count: overallSurrogate, pct: pct(overallSurrogate, overallTotal) },
+                total: overallTotal
+            },
+            inborn: {
+                mother:    { count: inbornMother,    pct: pct(inbornMother,    inbornTotal) },
+                surrogate: { count: inbornSurrogate, pct: pct(inbornSurrogate, inbornTotal) },
+                total: inbornTotal
+            }
+        });
+    } catch (err) {
+        console.error('Error in getTransportKpi:', err);
+        res.status(500).json({ error: 'Server error fetching transport KPI' });
+    }
+};
+
+// ── KMC DURATION TREND ────────────────────────────────────────────────────────
+// GET /api/v1/admissions/kmcDuration?facilityIds=228&months=2026-01,2026-02&loungeIds=222
+// Filters by bdk.kmcDate month (not admission month) so chart x-axis matches
+// selected period. Duration stored as HH:MM strings; converted to hours.
+exports.getKmcDurationTrend = async (req, res) => {
+    try {
+        const { facilityIds: fParam, months: mParam, loungeIds: lParam } = req.query;
+        if (!fParam || !mParam) return res.status(400).json({ error: 'facilityIds and months are required' });
+
+        const facilityIds = parseIds(fParam);
+        const months      = parseMonths(mParam);
+        const loungeIds   = parseIds(lParam);
+
+        const { clause: fClause, params: fParams } = buildFacilityClause(facilityIds);
+        const kmcMonthClause = `CONCAT(YEAR(bdk.kmcDate), '-', LPAD(MONTH(bdk.kmcDate), 2, '0')) IN (${months.map(() => '?').join(',')})`;
+        let where = `${fClause} AND ba.status IN (1, 2) AND ${kmcMonthClause}
+                     AND (
+                       (bdk.kmcDurationByMother IS NOT NULL AND bdk.kmcDurationByMother != '') OR
+                       (bdk.kmcDurationByOther  IS NOT NULL AND bdk.kmcDurationByOther  != '')
+                     )`;
+        const params = [...fParams, ...months];
+        const lClause = buildLoungeClause(loungeIds);
+        if (lClause) { where += ` AND ${lClause.clause}`; params.push(...lClause.params); }
+
+        const [rows] = await pool.query(
+            `SELECT
+               YEAR(bdk.kmcDate)  AS yr,
+               MONTH(bdk.kmcDate) AS mo,
+               COUNT(DISTINCT CONCAT(bdk.babyAdmissionId, '-', bdk.kmcDate)) AS babyDays,
+               ROUND(SUM(
+                 COALESCE(TIME_TO_SEC(CAST(bdk.kmcDurationByMother AS TIME)), 0) +
+                 COALESCE(TIME_TO_SEC(CAST(bdk.kmcDurationByOther  AS TIME)), 0)
+               ) / 3600, 2) AS totalKmcHours
+             FROM babyDailyKMC bdk
+             JOIN babyAdmission ba ON bdk.babyAdmissionId = ba.id
+             JOIN loungeMaster  lm ON ba.loungeId = lm.loungeId
+             WHERE ${where}
+             GROUP BY yr, mo
+             ORDER BY yr ASC, mo ASC`,
+            params
+        );
+
+        res.json(rows.map(r => ({
+            year:          r.yr,
+            month:         r.mo,
+            babyDays:      parseInt(r.babyDays),
+            totalKmcHours: parseFloat(r.totalKmcHours),
+            avgHours:      r.babyDays > 0
+                ? parseFloat((r.totalKmcHours / r.babyDays).toFixed(2))
+                : 0,
+        })));
+    } catch (err) {
+        console.error('Error in getKmcDurationTrend:', err);
+        res.status(500).json({ error: 'Server error fetching KMC duration trend' });
+    }
+};
+
+// ── EXECUTIVE SUMMARY TABLE ───────────────────────────────────────────────────
+// GET /api/v1/admissions/summary?facilityIds=228&months=2026-01,2026-02&loungeIds=222
+// Returns all 8 core indicators per admission-month for the exec summary table.
+exports.getSummaryTable = async (req, res) => {
+    try {
+        const { facilityIds: fParam, months: mParam, loungeIds: lParam } = req.query;
+        if (!fParam || !mParam) return res.status(400).json({ error: 'facilityIds and months are required' });
+
+        const facilityIds = parseIds(fParam);
+        const months      = parseMonths(mParam).sort();
+        const loungeIds   = parseIds(lParam);
+
+        const { clause: fClause, params: fParams } = buildFacilityClause(facilityIds);
+        const { clause: mClause, params: mParams } = buildMonthClause(months);
+
+        let baseWhere  = `${fClause} AND ba.status IN (1, 2) AND ${mClause}`;
+        const basePrms = [...fParams, ...mParams];
+        const lClause  = buildLoungeClause(loungeIds);
+        if (lClause) { baseWhere += ` AND ${lClause.clause}`; basePrms.push(...lClause.params); }
+
+        // Q1: Admissions + BW<1800 + Discharges — grouped by admission month
+        const q1 = pool.query(
+            `SELECT
+               CONCAT(YEAR(ba.admissionDateTime), '-', LPAD(MONTH(ba.admissionDateTime), 2, '0')) AS mKey,
+               COUNT(*) AS admCount,
+               SUM(CASE WHEN bdw.babyWeight IS NOT NULL AND bdw.babyWeight < 1800 THEN 1 ELSE 0 END) AS bwLt1800,
+               SUM(CASE WHEN ba.typeOfDischarge IS NOT NULL AND ba.typeOfDischarge != '' THEN 1 ELSE 0 END) AS dcCount
+             FROM babyAdmission ba
+             JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
+             LEFT JOIN babyDailyWeight bdw ON bdw.babyAdmissionId = ba.id AND bdw.weightType = 1
+             WHERE ${baseWhere}
+             GROUP BY mKey ORDER BY mKey`,
+            basePrms
+        );
+
+        // Q2: SSC<2h + BF<1h compliance — grouped by admission month
+        const q2Where = baseWhere +
+            ` AND ba.typeOfBorn IN ('Inborn','Outborn')
+              AND br.kmcInitiated2Hour IN (11, 12)
+              AND br.breastfeedInitiated1Hour IN (11, 12)`;
+        const q2 = pool.query(
+            `SELECT
+               CONCAT(YEAR(ba.admissionDateTime), '-', LPAD(MONTH(ba.admissionDateTime), 2, '0')) AS mKey,
+               SUM(CASE WHEN br.kmcInitiated2Hour        = 11 THEN 1 ELSE 0 END) AS sscYes,
+               SUM(CASE WHEN br.breastfeedInitiated1Hour = 11 THEN 1 ELSE 0 END) AS bfYes,
+               COUNT(*) AS ecTotal
+             FROM babyAdmission ba
+             JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
+             JOIN babyRegistration br ON br.babyId = ba.babyId
+             WHERE ${q2Where}
+             GROUP BY mKey ORDER BY mKey`,
+            basePrms
+        );
+
+        // Q3: Avg KMC duration — grouped by kmc-date month
+        const kmcMClause = `CONCAT(YEAR(bdk.kmcDate), '-', LPAD(MONTH(bdk.kmcDate), 2, '0')) IN (${months.map(() => '?').join(',')})`;
+        let kmcWhere = `${fClause} AND ba.status IN (1, 2) AND ${kmcMClause}
+                        AND ((bdk.kmcDurationByMother IS NOT NULL AND bdk.kmcDurationByMother != '')
+                          OR (bdk.kmcDurationByOther  IS NOT NULL AND bdk.kmcDurationByOther  != ''))`;
+        const kmcPrms = [...fParams, ...months];
+        if (lClause) { kmcWhere += ` AND ${lClause.clause}`; kmcPrms.push(...lClause.params); }
+        const q3 = pool.query(
+            `SELECT
+               CONCAT(YEAR(bdk.kmcDate), '-', LPAD(MONTH(bdk.kmcDate), 2, '0')) AS mKey,
+               COUNT(DISTINCT CONCAT(bdk.babyAdmissionId, '-', bdk.kmcDate)) AS babyDays,
+               ROUND(SUM(
+                 COALESCE(TIME_TO_SEC(CAST(bdk.kmcDurationByMother AS TIME)), 0) +
+                 COALESCE(TIME_TO_SEC(CAST(bdk.kmcDurationByOther  AS TIME)), 0)
+               ) / 3600, 2) AS totalKmcHrs
+             FROM babyDailyKMC bdk
+             JOIN babyAdmission ba ON bdk.babyAdmissionId = ba.id
+             JOIN loungeMaster  lm ON ba.loungeId = lm.loungeId
+             WHERE ${kmcWhere}
+             GROUP BY mKey ORDER BY mKey`,
+            kmcPrms
+        );
+
+        // Q4: Baby transport in KMC position (mother/surrogate) — grouped by admission month
+        const q4Where = baseWhere + ` AND ba.babyTransferredCondition IN (11, 12)`;
+        const q4 = pool.query(
+            `SELECT
+               CONCAT(YEAR(ba.admissionDateTime), '-', LPAD(MONTH(ba.admissionDateTime), 2, '0')) AS mKey,
+               SUM(CASE WHEN ba.babyTransferredCondition = 11 THEN 1 ELSE 0 END) AS motherCnt,
+               SUM(CASE WHEN ba.babyTransferredCondition = 12 THEN 1 ELSE 0 END) AS surrogateCnt,
+               COUNT(*) AS tpTotal
+             FROM babyAdmission ba
+             JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
+             WHERE ${q4Where}
+             GROUP BY mKey ORDER BY mKey`,
+            basePrms
+        );
+
+        const [[q1Rows], [q2Rows], [q3Rows], [q4Rows]] = await Promise.all([q1, q2, q3, q4]);
+
+        const pct = (n, d) => d > 0 ? parseFloat(((n / d) * 100).toFixed(1)) : 0;
+
+        const admMap = {}, bwMap = {}, dcMap = {};
+        for (const r of q1Rows) {
+            admMap[r.mKey] = parseInt(r.admCount);
+            bwMap[r.mKey]  = parseInt(r.bwLt1800);
+            dcMap[r.mKey]  = parseInt(r.dcCount);
+        }
+
+        const sscMap = {}, bfMap = {};
+        for (const r of q2Rows) {
+            const tot = parseInt(r.ecTotal);
+            const sy  = parseInt(r.sscYes);
+            const by  = parseInt(r.bfYes);
+            sscMap[r.mKey] = { yes: sy, total: tot, pct: pct(sy, tot) };
+            bfMap[r.mKey]  = { yes: by, total: tot, pct: pct(by, tot) };
+        }
+
+        const kmcMap = {};
+        for (const r of q3Rows) {
+            const bd = parseInt(r.babyDays);
+            const th = parseFloat(r.totalKmcHrs);
+            kmcMap[r.mKey] = { babyDays: bd, totalHrs: th, avg: bd > 0 ? parseFloat((th / bd).toFixed(2)) : 0 };
+        }
+
+        const tmMap = {}, tsMap = {};
+        for (const r of q4Rows) {
+            const mc = parseInt(r.motherCnt);
+            const sc = parseInt(r.surrogateCnt);
+            const tt = parseInt(r.tpTotal);
+            tmMap[r.mKey] = { count: mc, total: tt, pct: pct(mc, tt) };
+            tsMap[r.mKey] = { count: sc, total: tt, pct: pct(sc, tt) };
+        }
+
+        res.json({
+            months,
+            admissions:        admMap,
+            bwLt1800:          bwMap,
+            ssc2h:             sscMap,
+            bf1h:              bfMap,
+            avgKmc:            kmcMap,
+            kmcTransMother:    tmMap,
+            kmcTransSurrogate: tsMap,
+            discharges:        dcMap,
+        });
+    } catch (err) {
+        console.error('Error in getSummaryTable:', err);
+        res.status(500).json({ error: 'Server error fetching summary table' });
+    }
+};
+
+// ── GENDER COMPOSITION ────────────────────────────────────────────────────────
+// GET /api/v1/admissions/gender?facilityIds=228&months=2026-01&loungeIds=222
+// Returns Male/Female counts split by Inborn/Outborn.
+// Source: babyRegistration.babyGender joined to babyAdmission.
+exports.getGenderComposition = async (req, res) => {
+    try {
+        const { facilityIds: fParam, months: mParam, loungeIds: lParam } = req.query;
+        if (!fParam || !mParam) return res.status(400).json({ error: 'facilityIds and months are required' });
+
+        const facilityIds = parseIds(fParam);
+        const months      = parseMonths(mParam);
+        const loungeIds   = parseIds(lParam);
+
+        const { clause: fClause, params: fParams } = buildFacilityClause(facilityIds);
+        const { clause: mClause, params: mParams } = buildMonthClause(months);
+        let where = `${fClause} AND ba.status IN (1, 2) AND ${mClause}
+                     AND br.babyGender IN ('Male', 'Female')
+                     AND ba.typeOfBorn IN ('Inborn', 'Outborn')`;
+        const params = [...fParams, ...mParams];
+        const lClause = buildLoungeClause(loungeIds);
+        if (lClause) { where += ` AND ${lClause.clause}`; params.push(...lClause.params); }
+
+        const [rows] = await pool.query(
+            `SELECT br.babyGender, ba.typeOfBorn, COUNT(*) AS count
+             FROM babyAdmission ba
+             JOIN loungeMaster   lm ON ba.loungeId = lm.loungeId
+             JOIN babyRegistration br ON br.babyId  = ba.babyId
+             WHERE ${where}
+             GROUP BY br.babyGender, ba.typeOfBorn`,
+            params
+        );
+
+        const acc = {
+            male:   { inborn: 0, outborn: 0 },
+            female: { inborn: 0, outborn: 0 },
+        };
+        for (const row of rows) {
+            const key    = row.babyGender === 'Male' ? 'male' : 'female';
+            const bornKey = row.typeOfBorn === 'Inborn' ? 'inborn' : 'outborn';
+            acc[key][bornKey] = parseInt(row.count);
+        }
+
+        const pct = (part, total) => total > 0 ? parseFloat(((part / total) * 100).toFixed(1)) : 0;
+        const maleTotal   = acc.male.inborn   + acc.male.outborn;
+        const femaleTotal = acc.female.inborn + acc.female.outborn;
+        const grandTotal  = maleTotal + femaleTotal;
+
+        res.json({
+            male:   { ...acc.male,   total: maleTotal,   pct: pct(maleTotal,   grandTotal) },
+            female: { ...acc.female, total: femaleTotal,  pct: pct(femaleTotal, grandTotal) },
+            total: grandTotal,
+        });
+    } catch (err) {
+        console.error('Error in getGenderComposition:', err);
+        res.status(500).json({ error: 'Server error fetching gender composition' });
+    }
+};

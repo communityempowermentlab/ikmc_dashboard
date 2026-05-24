@@ -9,6 +9,10 @@ import {
   fetchAdmissionBirthWeight,
   fetchAdmissionDischarge,
   fetchEarlyCareKpi,
+  fetchTransportKpi,
+  fetchKmcDurationTrend,
+  fetchGenderComposition,
+  fetchSummaryTable,
 } from '../../redux/slices/admissionSlice';
 import './Dashboard.css';
 import './DashboardSkeleton.css';
@@ -70,19 +74,24 @@ const Dashboard = () => {
   // Chart instance refs
   const admChartInstanceRef   = useRef(null);
   const donutChartInstanceRef = useRef(null);
+  const kmcChartInstanceRef   = useRef(null);
 
   // Filters — all multi-select arrays now
   const { selectedFacilities, selectedLounges, selectedMonths } = useSelector(s => s.filters);
 
   // Admission data
   const {
-    kpi:         admKpi,
-    trend:       admTrend,
-    composition: admComp,
-    birthWeight: admBw,
-    discharge:   admDischarge,
-    earlyCare:   admEarlyCare,
-    loading:     admLoading,
+    kpi:          admKpi,
+    trend:        admTrend,
+    composition:  admComp,
+    birthWeight:  admBw,
+    discharge:    admDischarge,
+    earlyCare:    admEarlyCare,
+    transport:    admTransport,
+    kmcDuration:  admKmcDuration,
+    gender:       admGender,
+    summaryTable: admSummary,
+    loading:      admLoading,
   } = useSelector(s => s.admissions);
 
   const [isDashboardLoading, setIsDashboardLoading] = useState(true);
@@ -148,37 +157,100 @@ const Dashboard = () => {
     dispatch(fetchAdmissionBirthWeight(params));
     dispatch(fetchAdmissionDischarge(params));
     dispatch(fetchEarlyCareKpi(params));
+    dispatch(fetchTransportKpi(params));
+    dispatch(fetchKmcDurationTrend(params));
+    dispatch(fetchGenderComposition(params));
+    dispatch(fetchSummaryTable(params));
   }, [selectedFacilitiesKey, selectedLoungesKey, selectedMonthsKey, dispatch]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Static charts (KMC trend only now) ───────────────────────────────────
+  // ── KMC Duration trend chart (dynamic) ───────────────────────────────────
   useEffect(() => {
-    if (isDashboardLoading) return;
+    if (kmcChartInstanceRef.current) { kmcChartInstanceRef.current.destroy(); kmcChartInstanceRef.current = null; }
+    if (isDashboardLoading || !kmcChartRef.current || admKmcDuration.length === 0) return;
+
     const gridColor = 'rgba(0,0,0,0.06)', tickColor = '#9ca3af';
     Chart.defaults.font = { family: "'DM Sans', sans-serif", size: 11 };
 
-    let kmcChartInstance;
-    if (kmcChartRef.current) {
-      kmcChartInstance = new Chart(kmcChartRef.current, {
-        type: 'line',
-        data: {
-          labels: ['Dec', 'Jan', 'Feb', 'Mar', 'Apr', 'May'],
-          datasets: [
-            { label: 'Avg KMC hrs', data: [6.1,6.4,6.6,6.9,7.1,7.4], borderColor: '#0f766e', backgroundColor: 'rgba(15,118,110,0.08)', fill: true, tension: 0.4, pointRadius: 4, pointBackgroundColor: '#0f766e', borderWidth: 2 },
-            { label: 'Target',      data: [8,8,8,8,8,8],              borderColor: '#d1fae5', borderWidth: 1.5, borderDash: [5,4], pointRadius: 0, fill: false }
-          ]
+    const labels   = admKmcDuration.map(d => `${MONTH_SHORT[d.month - 1]} '${String(d.year).slice(2)}`);
+    const avgs     = admKmcDuration.map(d => d.avgHours);
+    const maxVal   = Math.max(...avgs, 8);
+    const targetData = admKmcDuration.map(() => 8);
+
+    const pointLabelsPlugin = {
+      id: 'kmcPointLabels',
+      afterDatasetsDraw(chart) {
+        const { ctx } = chart;
+        chart.getDatasetMeta(0).data.forEach((pt, i) => {
+          ctx.save();
+          ctx.font = '600 10.5px "DM Sans", sans-serif';
+          ctx.fillStyle = '#0f766e';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'bottom';
+          ctx.fillText(avgs[i].toFixed(1) + 'h', pt.x, pt.y - 7);
+          ctx.restore();
+        });
+      }
+    };
+
+    kmcChartInstanceRef.current = new Chart(kmcChartRef.current, {
+      type: 'line',
+      plugins: [pointLabelsPlugin],
+      data: {
+        labels,
+        datasets: [
+          {
+            label: 'Avg KMC hrs/baby/day',
+            data: avgs,
+            borderColor: '#0f766e', backgroundColor: 'rgba(15,118,110,0.08)',
+            fill: true, tension: 0.4, pointRadius: 5, pointHoverRadius: 7,
+            pointBackgroundColor: '#0f766e', pointBorderColor: '#fff', pointBorderWidth: 2,
+            borderWidth: 2.5,
+          },
+          {
+            label: 'Target (8 hrs)',
+            data: targetData,
+            borderColor: '#16a34a', borderWidth: 1.5,
+            borderDash: [5, 4], pointRadius: 0, fill: false,
+          }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        layout: { padding: { top: 24 } },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            mode: 'index', intersect: false,
+            callbacks: {
+              title: items => {
+                const d = admKmcDuration[items[0].dataIndex];
+                return `${MONTH_SHORT[d.month - 1]} ${d.year}`;
+              },
+              label: item => {
+                const d = admKmcDuration[item.dataIndex];
+                if (item.datasetIndex === 1) return ` Target: 8.0 hrs`;
+                return [
+                  ` Avg: ${d.avgHours.toFixed(2)} hrs / baby / day`,
+                  ` Baby-days: ${d.babyDays.toLocaleString()}`,
+                  ` Total KMC: ${d.totalKmcHours.toFixed(1)} hrs`,
+                ];
+              }
+            }
+          }
         },
-        options: {
-          responsive: true, maintainAspectRatio: false,
-          plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => ` ${c.dataset.label}: ${c.parsed.y.toFixed(1)} hrs` } } },
-          scales: {
-            x: { ticks: { color: tickColor }, grid: { display: false }, border: { display: false } },
-            y: { min: 5.5, max: 9, ticks: { color: tickColor, callback: v => v+'h' }, grid: { color: gridColor }, border: { display: false } }
+        scales: {
+          x: { ticks: { color: tickColor }, grid: { display: false }, border: { display: false } },
+          y: {
+            min: 0, suggestedMax: Math.ceil(maxVal * 1.15),
+            ticks: { color: tickColor, callback: v => v + 'h' },
+            grid: { color: gridColor }, border: { display: false }
           }
         }
-      });
-    }
-    return () => { if (kmcChartInstance) kmcChartInstance.destroy(); };
-  }, [isDashboardLoading]);
+      }
+    });
+
+    return () => { if (kmcChartInstanceRef.current) { kmcChartInstanceRef.current.destroy(); kmcChartInstanceRef.current = null; } };
+  }, [isDashboardLoading, admKmcDuration]);
 
   // ── Admission trend chart ─────────────────────────────────────────────────
   useEffect(() => {
@@ -430,6 +502,33 @@ const Dashboard = () => {
     }, 200);
   };
 
+  // ── Executive Summary Table helpers ─────────────────────────────────────────
+  const estBadge = (curr, prev, mode = 'neutral') => {
+    if (curr == null || prev == null || prev === 0) return null;
+    const diff = curr - prev;
+    if (Math.abs(diff) < 0.001) return null;
+    let cls = 'est-trend-neu';
+    if (mode === 'higher-better') cls = diff > 0 ? 'est-trend-pos' : 'est-trend-neg';
+    if (mode === 'lower-better')  cls = diff < 0 ? 'est-trend-pos' : 'est-trend-neg';
+    const absPct = ((Math.abs(diff) / Math.abs(prev)) * 100).toFixed(1);
+    return <span className={`est-trend ${cls}`}>{diff > 0 ? '↑' : '↓'}{absPct}%</span>;
+  };
+  const estPpBadge = (currPct, prevPct, higherIsBetter = true) => {
+    if (currPct == null || prevPct == null) return null;
+    const diff = parseFloat((currPct - prevPct).toFixed(1));
+    if (Math.abs(diff) < 0.1) return null;
+    const cls = (higherIsBetter ? diff > 0 : diff < 0) ? 'est-trend-pos' : 'est-trend-neg';
+    return <span className={`est-trend ${cls}`}>{diff > 0 ? '↑' : '↓'}{Math.abs(diff)}pp</span>;
+  };
+  const estKmcClass = (avg) => {
+    if (avg == null) return '';
+    return avg >= 8 ? 'est-green' : avg >= 6 ? 'est-amber' : 'est-red';
+  };
+  const estPctClass = (p) => {
+    if (p == null) return '';
+    return p >= 80 ? 'est-green' : p >= 60 ? 'est-amber' : 'est-red';
+  };
+
   return (
     <div className="dashboard-container">
       {/* HEADER */}
@@ -592,7 +691,33 @@ const Dashboard = () => {
                   )}
                 </div>
 
-                <div className="kpi amber kpi--static"><div className="kpi-label">Avg KMC duration</div><div className="kpi-val">7.4 <span style={{fontSize:'14px',fontWeight:400}}>hrs</span></div><div className="kpi-trend trend-up">↑ 0.6 hrs vs Apr</div></div>
+                {(() => {
+                  const overallAvg = admKmcDuration.length > 0
+                    ? (admKmcDuration.reduce((s, d) => s + d.totalKmcHours, 0) /
+                       admKmcDuration.reduce((s, d) => s + d.babyDays,     0))
+                    : null;
+                  const totalBabyDays = admKmcDuration.reduce((s, d) => s + d.babyDays, 0);
+                  const col = overallAvg === null ? 'amber'
+                    : overallAvg >= 8 ? 'green'
+                    : overallAvg >= 6 ? 'amber'
+                    : 'red';
+                  const trendCls = col === 'green' ? 'trend-up' : col === 'red' ? 'trend-dn' : 'trend-neu';
+                  return (
+                    <div className={`kpi ${col}`}>
+                      <div className="kpi-label">Avg KMC duration</div>
+                      {admLoading.kmcDuration ? (
+                        <div className="kpi-val adm-loading">—</div>
+                      ) : overallAvg !== null ? (
+                        <>
+                          <div className="kpi-val">{overallAvg.toFixed(1)}<span style={{fontSize:'14px',fontWeight:400}}> hrs</span></div>
+                          <div className={`kpi-trend ${trendCls}`}>{totalBabyDays.toLocaleString()} baby-days</div>
+                        </>
+                      ) : (
+                        <><div className="kpi-val">—</div><div className="kpi-trend trend-neu">No data</div></>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* Mortality rate — DYNAMIC */}
                 <div className={`kpi ${!admDischarge ? 'green' : admDischarge.diedPct > 5 ? 'red' : admDischarge.diedPct > 3 ? 'amber' : 'green'}`}>
@@ -671,7 +796,27 @@ const Dashboard = () => {
                     </div>
                   );
                 })()}
-                <div className="kpi green kpi--static"><div className="kpi-label">KMC transport</div><div className="kpi-val">82<span style={{fontSize:'14px',fontWeight:400}}>%</span></div><div className="kpi-trend trend-up">↑ 7% vs Apr</div></div>
+                {(() => {
+                  const d   = admTransport?.overall;
+                  const pct = d?.mother?.pct ?? null;
+                  const col = pct === null ? 'green' : pct >= 80 ? 'green' : pct >= 60 ? 'amber' : 'red';
+                  const trendCls = pct === null ? 'trend-neu' : pct >= 80 ? 'trend-up' : pct >= 60 ? 'trend-neu' : 'trend-dn';
+                  return (
+                    <div className={`kpi ${col}`}>
+                      <div className="kpi-label">KMC transport</div>
+                      {admLoading.transport ? (
+                        <div className="kpi-val adm-loading">—</div>
+                      ) : d && d.total > 0 ? (
+                        <>
+                          <div className="kpi-val">{pct}<span style={{fontSize:'14px',fontWeight:400}}>%</span></div>
+                          <div className={`kpi-trend ${trendCls}`}>{d.mother.count.toLocaleString()} of {d.total.toLocaleString()} with mother</div>
+                        </>
+                      ) : (
+                        <><div className="kpi-val">—</div><div className="kpi-trend trend-neu">No data</div></>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             </div>
 
@@ -679,7 +824,7 @@ const Dashboard = () => {
             <div className="row-2col">
               <div className="card">
                 <div className="card-title">Admission trend — monthly ({sectionLabel})</div>
-                <div className="chart-wrap" style={{height:'230px', position:'relative'}}>
+                <div className="chart-wrap chart-fill">
                   <canvas ref={admChartRef} role="img" aria-label="Monthly admission trend chart" />
                   {admLoading.trend && <div className="adm-chart-overlay">Loading trend data…</div>}
                   {!admLoading.trend && admTrend.length === 0 && <div className="adm-chart-overlay">No admission data available</div>}
@@ -757,24 +902,85 @@ const Dashboard = () => {
                 )}
               </div>
 
+              {/* Gender Composition — DYNAMIC */}
               <div className="card">
-                <div className="card-title">Clinical compliance indicators</div>
-                <div className="static-tag">✗ Not integrated — static data</div>
-                <div className="prog-item"><div className="prog-header"><span>KMC transport — mother</span><span className="prog-pct">82%</span></div><div className="prog-track"><div className="prog-fill" style={{width:'82%',background:'#22c55e'}}></div></div></div>
-                <div className="prog-item"><div className="prog-header"><span>KMC transport — surrogate</span><span className="prog-pct">61%</span></div><div className="prog-track"><div className="prog-fill" style={{width:'61%',background:'#f59e0b'}}></div></div></div>
-                <div className="prog-item"><div className="prog-header"><span>Complete data capture</span><span className="prog-pct">92%</span></div><div className="prog-track"><div className="prog-fill" style={{width:'92%',background:'#3b82f6'}}></div></div></div>
+                <div className="card-title">Gender composition</div>
+                {admLoading.gender ? (
+                  <div className="adm-chart-overlay" style={{position:'relative',height:'140px'}}>Loading…</div>
+                ) : !admGender || admGender.total === 0 ? (
+                  <div className="adm-chart-overlay" style={{position:'relative',height:'140px'}}>No data available</div>
+                ) : (() => {
+                  const genders = [
+                    { key: 'male',   label: 'Male',   icon: '♂', color: '#3b82f6', inbornColor: '#1d4ed8', outbornColor: '#93c5fd', data: admGender.male   },
+                    { key: 'female', label: 'Female', icon: '♀', color: '#ec4899', inbornColor: '#be185d', outbornColor: '#f9a8d4', data: admGender.female },
+                  ];
+                  return (
+                    <div className="gd-section">
+                      <div className="gd-total">
+                        <span className="gd-total-num">{admGender.total.toLocaleString()}</span>
+                        <span className="gd-total-lbl">total babies</span>
+                      </div>
+                      <div className="gd-rows">
+                        {genders.map(({ key, label, icon, color, inbornColor, outbornColor, data }) => {
+                          const inbornFlex  = data.total > 0 ? (data.inborn  / data.total) * 100 : 50;
+                          const outbornFlex = data.total > 0 ? (data.outborn / data.total) * 100 : 50;
+                          return (
+                            <div key={key} className="gd-row" style={{'--gd-color': color}}>
+                              <div className="gd-row-head">
+                                <span className="gd-icon" style={{color}}>{icon}</span>
+                                <span className="gd-label">{label}</span>
+                                <span className="gd-count">{data.total.toLocaleString()}</span>
+                                <span className="gd-pct" style={{color}}>{data.pct}%</span>
+                              </div>
+                              <div
+                                className="gd-bar"
+                                title={`${label} — Inborn: ${data.inborn.toLocaleString()} · Outborn: ${data.outborn.toLocaleString()}`}
+                              >
+                                <div className="gd-seg" style={{flex: inbornFlex  || 0.001, background: inbornColor}} />
+                                <div className="gd-seg" style={{flex: outbornFlex || 0.001, background: outbornColor}} />
+                              </div>
+                              <div className="gd-sub">
+                                <span style={{color: inbornColor, fontWeight:600}}>Inborn: {data.inborn.toLocaleString()}</span>
+                                <span className="gd-sub-sep">·</span>
+                                <span style={{color: outbornColor === '#f9a8d4' ? '#be185d' : '#1d4ed8', fontWeight:600}}>Outborn: {data.outborn.toLocaleString()}</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
 
+              {/* KMC Duration Trend — DYNAMIC */}
               <div className="card">
-                <div className="card-title">Avg KMC duration — 6-month trend</div>
-                <div className="static-tag">✗ Not integrated — static data</div>
-                <div className="chart-wrap" style={{height:'150px'}}>
-                  <canvas ref={kmcChartRef} role="img" aria-label="KMC duration trend chart" />
-                </div>
-                <div style={{textAlign:'center', marginTop:'8px'}}>
-                  <span style={{fontSize:'11px', color:'var(--text-muted)'}}>Target: </span>
-                  <span style={{fontSize:'11px', fontWeight:600, color:'var(--green)'}}>≥8 hrs &nbsp;·&nbsp; Current: 7.4 hrs</span>
-                </div>
+                <div className="card-title">Avg KMC duration / baby / day</div>
+                {(() => {
+                  const overallAvg = admKmcDuration.length > 0
+                    ? (admKmcDuration.reduce((s, d) => s + d.totalKmcHours, 0) /
+                       admKmcDuration.reduce((s, d) => s + d.babyDays,     0)).toFixed(1)
+                    : null;
+                  const avgColor = overallAvg === null ? 'var(--text-muted)'
+                    : parseFloat(overallAvg) >= 8 ? 'var(--green)'
+                    : parseFloat(overallAvg) >= 6 ? 'var(--amber)'
+                    : 'var(--red)';
+                  return (
+                    <>
+                      {overallAvg && (
+                        <div className="kmc-avg-strip">
+                          <span className="kmc-avg-val" style={{color: avgColor}}>{overallAvg}<span className="kmc-avg-unit">h</span></span>
+                          <span className="kmc-avg-meta">avg · target ≥8 h</span>
+                        </div>
+                      )}
+                      <div className="chart-wrap chart-fill">
+                        <canvas ref={kmcChartRef} role="img" aria-label="KMC duration trend chart" />
+                        {admLoading.kmcDuration && <div className="adm-chart-overlay">Loading…</div>}
+                        {!admLoading.kmcDuration && admKmcDuration.length === 0 && <div className="adm-chart-overlay">No KMC duration data</div>}
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             </div>
 
@@ -874,65 +1080,58 @@ const Dashboard = () => {
               })}
             </div>
 
-            {/* ROW 5: Discharge outcomes — DYNAMIC + Facility ranking */}
-            <div className="row-2col-even">
-              <div className="card">
-                <div className="card-title">
-                  Discharge outcomes breakdown
-                  {admDischarge && !admLoading.discharge && (
-                    <span style={{marginLeft:'8px', fontSize:'11px', fontWeight:500, color:'var(--text-muted)'}}>
-                      {admDischarge.totalDischarge.toLocaleString()} total
-                    </span>
-                  )}
-                </div>
-
-                {/* Stacked bar legend */}
-                <div className="dc-bar-legend">
-                  <span className="dc-bar-legend-swatch" style={{background:'#3b82f6'}} />
-                  <span className="dc-bar-legend-label">Inborn</span>
-                  <span className="dc-bar-legend-swatch" style={{background:'#14b8a6', marginLeft:'12px'}} />
-                  <span className="dc-bar-legend-label">Outborn</span>
-                </div>
-
-                {/* Individual stacked bars */}
-                {admLoading.discharge && (
-                  <div className="adm-chart-overlay" style={{position:'relative',height:'180px'}}>Loading discharge data…</div>
-                )}
-                {!admLoading.discharge && (!admDischarge || !admDischarge.categories?.length) && (
-                  <div className="adm-chart-overlay" style={{position:'relative',height:'180px'}}>No discharge data available</div>
-                )}
-                {admDischarge && !admLoading.discharge && admDischarge.categories?.length > 0 && (() => {
-                  const maxTotal = Math.max(...admDischarge.categories.map(c => c.total), 1);
+            {/* ROW 5: Transportation in KMC Position — DYNAMIC */}
+            <div>
+              <div className="section-label">Transportation in KMC Position — {sectionLabel}</div>
+              <div className="card tp-card">
+                <div className="card-title">Baby Transportation in KMC Position</div>
+                {admLoading.transport ? (
+                  <div className="ec-empty">Loading transport data…</div>
+                ) : !admTransport || admTransport.overall.total === 0 ? (
+                  <div className="ec-empty">No transportation data available for selected period</div>
+                ) : (() => {
+                  const panels = [
+                    { key: 'overall', label: 'Overall', sub: 'All babies', data: admTransport.overall },
+                    { key: 'inborn',  label: 'Inborn Only', sub: 'Born at this facility', data: admTransport.inborn },
+                  ];
                   return (
-                    <div className="dc-bars">
-                      {admDischarge.categories.map(c => {
-                        const barW    = (c.total / maxTotal) * 100;
-                        const inPct   = c.total > 0 ? (c.inborn  / c.total) * 100 : 0;
-                        const outPct  = c.total > 0 ? (c.outborn / c.total) * 100 : 0;
-                        const color   = DC_COLORS[c.label] || '#94a3b8';
+                    <div className="tp-panels">
+                      {panels.map(({ key, label, sub, data }) => {
+                        const motherFlex    = data.total > 0 ? (data.mother.count    / data.total) * 100 : 50;
+                        const surrogateFlex = data.total > 0 ? (data.surrogate.count / data.total) * 100 : 50;
                         return (
-                          <div key={c.label} className="dc-bar-row">
-                            <div className="dc-bar-header">
-                              <span className="dc-bar-dot" style={{background: color}} />
-                              <span className="dc-bar-name">{c.label}</span>
-                              <span className="dc-bar-meta">
-                                <span className="dc-bar-count">{c.total.toLocaleString()}</span>
-                                <span className="dc-bar-pct" style={{color}}>{c.pct}%</span>
-                              </span>
-                            </div>
-                            <div className="dc-bar-track">
-                              <div className="dc-bar-fill" style={{width:`${barW}%`}}>
-                                {inPct > 0 && (
-                                  <div className="dc-bar-seg dc-bar-inborn" style={{flex: inPct}} />
-                                )}
-                                {outPct > 0 && (
-                                  <div className="dc-bar-seg dc-bar-outborn" style={{flex: outPct}} />
-                                )}
+                          <div key={key} className="tp-panel">
+                            <div className="tp-panel-head">
+                              <div>
+                                <div className="tp-panel-label">{label}</div>
+                                <div className="tp-panel-sub">{sub}</div>
+                              </div>
+                              <div className="tp-panel-total">
+                                <span className="tp-total-num">{data.total.toLocaleString()}</span>
+                                <span className="tp-total-lbl">babies</span>
                               </div>
                             </div>
-                            <div className="dc-bar-sub">
-                              Inborn: {c.inborn.toLocaleString()} &nbsp;·&nbsp; Outborn: {c.outborn.toLocaleString()}
-                              {c.other > 0 && ` · Other: ${c.other.toLocaleString()}`}
+
+                            <div
+                              className="tp-bar"
+                              title={`Mother: ${data.mother.count.toLocaleString()} (${data.mother.pct}%) · Surrogate: ${data.surrogate.count.toLocaleString()} (${data.surrogate.pct}%)`}
+                            >
+                              <div className="tp-seg tp-seg-mother"    style={{ flex: motherFlex    || 0.001 }} />
+                              <div className="tp-seg tp-seg-surrogate" style={{ flex: surrogateFlex || 0.001 }} />
+                            </div>
+
+                            <div className="tp-stats">
+                              {[
+                                { cls: 'mother',    label: 'With Mother',    d: data.mother    },
+                                { cls: 'surrogate', label: 'With Surrogate', d: data.surrogate },
+                              ].map(({ cls, label: statLabel, d }) => (
+                                <div key={cls} className="tp-stat-row">
+                                  <span className={`tp-dot tp-dot-${cls}`} />
+                                  <span className="tp-stat-label">{statLabel}</span>
+                                  <span className="tp-stat-count">{d.count.toLocaleString()}</span>
+                                  <span className={`tp-stat-pct tp-pct-${cls}`}>{d.pct}%</span>
+                                </div>
+                              ))}
                             </div>
                           </div>
                         );
@@ -941,31 +1140,322 @@ const Dashboard = () => {
                   );
                 })()}
               </div>
+            </div>
 
-              <div className="card">
-                <div className="card-title">Facility performance ranking — {sectionLabel}</div>
-                <div className="static-tag">✗ Not integrated — static data</div>
-                <div className="table-responsive">
-                  <table className="facility-table">
-                    <thead><tr><th>Facility</th><th>KMC hrs</th><th>SSC %</th><th>BF %</th><th>Mortality</th><th>Status</th></tr></thead>
-                    <tbody>
-                      <tr><td><strong>KGMU Lucknow</strong></td><td><div className="mini-bar-wrap"><div className="mini-bar-track"><div className="mini-bar-fill" style={{width:'89%',background:'#22c55e'}}></div></div><span className="mini-val">8.9</span></div></td><td style={{color:'var(--green)',fontWeight:600,fontFamily:'var(--mono)'}}>84%</td><td style={{color:'var(--green)',fontWeight:600,fontFamily:'var(--mono)'}}>91%</td><td style={{fontFamily:'var(--mono)'}}>2.1%</td><td><span className="badge badge-top">Top</span></td></tr>
-                      <tr><td><strong>BRD Gorakhpur</strong></td><td><div className="mini-bar-wrap"><div className="mini-bar-track"><div className="mini-bar-fill" style={{width:'81%',background:'#22c55e'}}></div></div><span className="mini-val">8.1</span></div></td><td style={{color:'var(--green)',fontWeight:600,fontFamily:'var(--mono)'}}>79%</td><td style={{color:'var(--green)',fontWeight:600,fontFamily:'var(--mono)'}}>85%</td><td style={{fontFamily:'var(--mono)'}}>2.8%</td><td><span className="badge badge-good">Good</span></td></tr>
-                      <tr><td><strong>LLRM Meerut</strong></td><td><div className="mini-bar-wrap"><div className="mini-bar-track"><div className="mini-bar-fill" style={{width:'72%',background:'#f59e0b'}}></div></div><span className="mini-val">7.2</span></div></td><td style={{color:'var(--amber)',fontWeight:600,fontFamily:'var(--mono)'}}>72%</td><td style={{color:'var(--amber)',fontWeight:600,fontFamily:'var(--mono)'}}>80%</td><td style={{fontFamily:'var(--mono)'}}>3.4%</td><td><span className="badge badge-avg">Average</span></td></tr>
-                      <tr><td><strong>DWH Varanasi</strong></td><td><div className="mini-bar-wrap"><div className="mini-bar-track"><div className="mini-bar-fill" style={{width:'64%',background:'#f59e0b'}}></div></div><span className="mini-val">6.4</span></div></td><td style={{color:'var(--amber)',fontWeight:600,fontFamily:'var(--mono)'}}>65%</td><td style={{color:'var(--amber)',fontWeight:600,fontFamily:'var(--mono)'}}>71%</td><td style={{fontFamily:'var(--mono)'}}>3.9%</td><td><span className="badge badge-avg">Average</span></td></tr>
-                      <tr><td><strong>CHC Ballia</strong></td><td><div className="mini-bar-wrap"><div className="mini-bar-track"><div className="mini-bar-fill" style={{width:'58%',background:'#ef4444'}}></div></div><span className="mini-val">5.8</span></div></td><td style={{color:'var(--red)',fontWeight:600,fontFamily:'var(--mono)'}}>51%</td><td style={{color:'var(--red)',fontWeight:600,fontFamily:'var(--mono)'}}>63%</td><td style={{fontFamily:'var(--mono)'}}>4.7%</td><td><span className="badge badge-low">Low</span></td></tr>
-                      <tr><td><strong>DH Agra</strong></td><td><div className="mini-bar-wrap"><div className="mini-bar-track"><div className="mini-bar-fill" style={{width:'51%',background:'#ef4444'}}></div></div><span className="mini-val">5.1</span></div></td><td style={{color:'var(--red)',fontWeight:600,fontFamily:'var(--mono)'}}>48%</td><td style={{color:'var(--red)',fontWeight:600,fontFamily:'var(--mono)'}}>58%</td><td style={{color:'var(--red)',fontFamily:'var(--mono)',fontWeight:600}}>5.4%</td><td><span className="badge badge-low">Low ⚠</span></td></tr>
-                    </tbody>
-                  </table>
+            {/* ROW 6: Discharge outcomes — full width */}
+            <div className="card">
+              <div className="card-title">
+                Discharge outcomes breakdown
+                {admDischarge && !admLoading.discharge && (
+                  <span style={{marginLeft:'8px', fontSize:'11px', fontWeight:500, color:'var(--text-muted)'}}>
+                    {admDischarge.totalDischarge.toLocaleString()} total
+                  </span>
+                )}
+              </div>
+
+              <div className="dc-bar-legend">
+                <span className="dc-bar-legend-swatch" style={{background:'#3b82f6'}} />
+                <span className="dc-bar-legend-label">Inborn</span>
+                <span className="dc-bar-legend-swatch" style={{background:'#14b8a6', marginLeft:'12px'}} />
+                <span className="dc-bar-legend-label">Outborn</span>
+              </div>
+
+              {admLoading.discharge && (
+                <div className="adm-chart-overlay" style={{position:'relative',height:'180px'}}>Loading discharge data…</div>
+              )}
+              {!admLoading.discharge && (!admDischarge || !admDischarge.categories?.length) && (
+                <div className="adm-chart-overlay" style={{position:'relative',height:'180px'}}>No discharge data available</div>
+              )}
+              {admDischarge && !admLoading.discharge && admDischarge.categories?.length > 0 && (() => {
+                const maxTotal = Math.max(...admDischarge.categories.map(c => c.total), 1);
+                return (
+                  <div className="dc-bars">
+                    {admDischarge.categories.map(c => {
+                      const barW   = (c.total / maxTotal) * 100;
+                      const inPct  = c.total > 0 ? (c.inborn  / c.total) * 100 : 0;
+                      const outPct = c.total > 0 ? (c.outborn / c.total) * 100 : 0;
+                      const color  = DC_COLORS[c.label] || '#94a3b8';
+                      return (
+                        <div key={c.label} className="dc-bar-row">
+                          <div className="dc-bar-header">
+                            <span className="dc-bar-dot" style={{background: color}} />
+                            <span className="dc-bar-name">{c.label}</span>
+                            <span className="dc-bar-meta">
+                              <span className="dc-bar-count">{c.total.toLocaleString()}</span>
+                              <span className="dc-bar-pct" style={{color}}>{c.pct}%</span>
+                            </span>
+                          </div>
+                          <div className="dc-bar-track">
+                            <div className="dc-bar-fill" style={{width:`${barW}%`}}>
+                              {inPct  > 0 && <div className="dc-bar-seg dc-bar-inborn"  style={{flex: inPct}}  />}
+                              {outPct > 0 && <div className="dc-bar-seg dc-bar-outborn" style={{flex: outPct}} />}
+                            </div>
+                          </div>
+                          <div className="dc-bar-sub">
+                            Inborn: {c.inborn.toLocaleString()} &nbsp;·&nbsp; Outborn: {c.outborn.toLocaleString()}
+                            {c.other > 0 && ` · Other: ${c.other.toLocaleString()}`}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* ROW 7: Executive Summary Analytics Table */}
+            <div className="card est-card">
+              <div className="est-header">
+                <div>
+                  <div className="card-title" style={{marginBottom:'2px'}}>Executive performance summary</div>
+                  <div className="est-subtitle">Month-wise indicator comparison · {sectionLabel}</div>
+                </div>
+                <div className="est-legend">
+                  <span className="est-leg-item"><span className="est-trend est-trend-pos">↑</span> Improvement</span>
+                  <span className="est-leg-sep">·</span>
+                  <span className="est-leg-item"><span className="est-trend est-trend-neg">↓</span> Decline</span>
+                  <span className="est-leg-sep">·</span>
+                  <span className="est-leg-item"><span className="est-trend est-trend-neu">↑</span> Neutral (count)</span>
+                  <span className="est-leg-sep">·</span>
+                  <span className="est-leg-item">pp = percentage points</span>
                 </div>
               </div>
+
+              {admLoading.summary && (
+                <div className="adm-chart-overlay" style={{position:'relative',height:'260px'}}>Building executive summary…</div>
+              )}
+              {!admLoading.summary && (!admSummary || admSummary.months.length === 0) && (
+                <div className="adm-chart-overlay" style={{position:'relative',height:'180px'}}>No data available for selected filters</div>
+              )}
+              {admSummary && !admLoading.summary && admSummary.months.length > 0 && (() => {
+                const mos = admSummary.months;
+                const prev = (idx) => idx > 0 ? mos[idx - 1] : null;
+
+                return (
+                  <div className="est-wrap">
+                    <table className="est-table">
+                      <thead>
+                        <tr>
+                          <th className="est-col-ind">Indicator</th>
+                          {mos.map(m => <th key={m} className="est-col-month">{formatMonthId(m)}</th>)}
+                        </tr>
+                      </thead>
+                      <tbody>
+
+                        {/* ── GROUP: Volume ── */}
+                        <tr className="est-group-row">
+                          <td className="est-group-label" colSpan={mos.length + 1}>Volume</td>
+                        </tr>
+
+                        {/* Admissions */}
+                        <tr>
+                          <td className="est-col-ind est-td-ind">
+                            <div className="est-ind-cell">
+                              <span className="est-ind-dot" style={{background:'#3b82f6'}} />
+                              <span className="est-ind-name">Admissions</span>
+                            </div>
+                          </td>
+                          {mos.map((m, i) => {
+                            const v = admSummary.admissions[m] ?? null;
+                            const p = prev(i) ? (admSummary.admissions[prev(i)] ?? null) : null;
+                            return (
+                              <td key={m}>
+                                <div className="est-cell">
+                                  <span className="est-val">{v != null ? v.toLocaleString() : '—'}</span>
+                                  {estBadge(v, p, 'neutral')}
+                                </div>
+                              </td>
+                            );
+                          })}
+                        </tr>
+
+                        {/* BW <1800g */}
+                        <tr>
+                          <td className="est-col-ind est-td-ind">
+                            <div className="est-ind-cell">
+                              <span className="est-ind-dot" style={{background:'#f59e0b'}} />
+                              <span className="est-ind-name">BW &lt;1800g</span>
+                            </div>
+                          </td>
+                          {mos.map((m, i) => {
+                            const v = admSummary.bwLt1800[m] ?? null;
+                            const p = prev(i) ? (admSummary.bwLt1800[prev(i)] ?? null) : null;
+                            return (
+                              <td key={m}>
+                                <div className="est-cell">
+                                  <span className="est-val">{v != null ? v.toLocaleString() : '—'}</span>
+                                  {estBadge(v, p, 'neutral')}
+                                </div>
+                              </td>
+                            );
+                          })}
+                        </tr>
+
+                        {/* Discharges */}
+                        <tr>
+                          <td className="est-col-ind est-td-ind">
+                            <div className="est-ind-cell">
+                              <span className="est-ind-dot" style={{background:'#14b8a6'}} />
+                              <span className="est-ind-name">Discharges</span>
+                            </div>
+                          </td>
+                          {mos.map((m, i) => {
+                            const v = admSummary.discharges[m] ?? null;
+                            const p = prev(i) ? (admSummary.discharges[prev(i)] ?? null) : null;
+                            return (
+                              <td key={m}>
+                                <div className="est-cell">
+                                  <span className="est-val">{v != null ? v.toLocaleString() : '—'}</span>
+                                  {estBadge(v, p, 'neutral')}
+                                </div>
+                              </td>
+                            );
+                          })}
+                        </tr>
+
+                        {/* ── GROUP: Early Care ── */}
+                        <tr className="est-group-row">
+                          <td className="est-group-label" colSpan={mos.length + 1}>Early Care Quality</td>
+                        </tr>
+
+                        {/* SSC <2h */}
+                        <tr>
+                          <td className="est-col-ind est-td-ind">
+                            <div className="est-ind-cell">
+                              <span className="est-ind-dot" style={{background:'#22c55e'}} />
+                              <span className="est-ind-name">SSC &lt;2h</span>
+                            </div>
+                          </td>
+                          {mos.map((m, i) => {
+                            const d    = admSummary.ssc2h[m];
+                            const pPct = prev(i) ? (admSummary.ssc2h[prev(i)]?.pct ?? null) : null;
+                            return (
+                              <td key={m}>
+                                <div className="est-cell">
+                                  <span className={`est-val ${estPctClass(d?.pct ?? null)}`}>
+                                    {d ? `${d.pct}%` : '—'}
+                                  </span>
+                                  {d && <span className="est-sub">{d.yes.toLocaleString()} / {d.total.toLocaleString()}</span>}
+                                  {estPpBadge(d?.pct ?? null, pPct)}
+                                </div>
+                              </td>
+                            );
+                          })}
+                        </tr>
+
+                        {/* BF <1h */}
+                        <tr>
+                          <td className="est-col-ind est-td-ind">
+                            <div className="est-ind-cell">
+                              <span className="est-ind-dot" style={{background:'#8b5cf6'}} />
+                              <span className="est-ind-name">BF &lt;1h</span>
+                            </div>
+                          </td>
+                          {mos.map((m, i) => {
+                            const d    = admSummary.bf1h[m];
+                            const pPct = prev(i) ? (admSummary.bf1h[prev(i)]?.pct ?? null) : null;
+                            return (
+                              <td key={m}>
+                                <div className="est-cell">
+                                  <span className={`est-val ${estPctClass(d?.pct ?? null)}`}>
+                                    {d ? `${d.pct}%` : '—'}
+                                  </span>
+                                  {d && <span className="est-sub">{d.yes.toLocaleString()} / {d.total.toLocaleString()}</span>}
+                                  {estPpBadge(d?.pct ?? null, pPct)}
+                                </div>
+                              </td>
+                            );
+                          })}
+                        </tr>
+
+                        {/* ── GROUP: KMC Quality ── */}
+                        <tr className="est-group-row">
+                          <td className="est-group-label" colSpan={mos.length + 1}>KMC Quality</td>
+                        </tr>
+
+                        {/* Avg KMC */}
+                        <tr>
+                          <td className="est-col-ind est-td-ind">
+                            <div className="est-ind-cell">
+                              <span className="est-ind-dot" style={{background:'#0f766e'}} />
+                              <span className="est-ind-name">Avg KMC</span>
+                            </div>
+                          </td>
+                          {mos.map((m, i) => {
+                            const d    = admSummary.avgKmc[m];
+                            const pAvg = prev(i) ? (admSummary.avgKmc[prev(i)]?.avg ?? null) : null;
+                            return (
+                              <td key={m}>
+                                <div className="est-cell">
+                                  <span className={`est-val ${estKmcClass(d?.avg ?? null)}`}>
+                                    {d ? `${d.avg.toFixed(1)}h` : '—'}
+                                  </span>
+                                  {d && <span className="est-sub">{d.babyDays.toLocaleString()} baby-days</span>}
+                                  {estBadge(d?.avg ?? null, pAvg, 'higher-better')}
+                                </div>
+                              </td>
+                            );
+                          })}
+                        </tr>
+
+                        {/* KMC Trans (M) */}
+                        <tr>
+                          <td className="est-col-ind est-td-ind">
+                            <div className="est-ind-cell">
+                              <span className="est-ind-dot" style={{background:'#1d4ed8'}} />
+                              <span className="est-ind-name">KMC Trans (M)</span>
+                            </div>
+                          </td>
+                          {mos.map((m, i) => {
+                            const d = admSummary.kmcTransMother[m];
+                            const p = prev(i) ? (admSummary.kmcTransMother[prev(i)] ?? null) : null;
+                            return (
+                              <td key={m}>
+                                <div className="est-cell">
+                                  <span className="est-val">{d ? d.count.toLocaleString() : '—'}</span>
+                                  {d && <span className="est-sub">{d.pct}% of {d.total.toLocaleString()}</span>}
+                                  {estBadge(d?.count ?? null, p?.count ?? null, 'neutral')}
+                                </div>
+                              </td>
+                            );
+                          })}
+                        </tr>
+
+                        {/* KMC Trans (S) */}
+                        <tr>
+                          <td className="est-col-ind est-td-ind">
+                            <div className="est-ind-cell">
+                              <span className="est-ind-dot" style={{background:'#7c3aed'}} />
+                              <span className="est-ind-name">KMC Trans (S)</span>
+                            </div>
+                          </td>
+                          {mos.map((m, i) => {
+                            const d = admSummary.kmcTransSurrogate[m];
+                            const p = prev(i) ? (admSummary.kmcTransSurrogate[prev(i)] ?? null) : null;
+                            return (
+                              <td key={m}>
+                                <div className="est-cell">
+                                  <span className="est-val">{d ? d.count.toLocaleString() : '—'}</span>
+                                  {d && <span className="est-sub">{d.pct}% of {d.total.toLocaleString()}</span>}
+                                  {estBadge(d?.count ?? null, p?.count ?? null, 'neutral')}
+                                </div>
+                              </td>
+                            );
+                          })}
+                        </tr>
+
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
             </div>
           </>
         )}
 
         <div className="footer">
-          Data source: HMIS / KMC Programme MIS &nbsp;·&nbsp; Last updated: 23 May 2025, 08:00 IST &nbsp;·&nbsp;
-          Health &amp; Family Welfare Department, Government of Uttar Pradesh &nbsp;·&nbsp; For official use only
+          Data source: iKMC Application &nbsp;·&nbsp; Last updated: 23 May 2025, 08:00 IST &nbsp;·&nbsp;
+          Copyright &copy; 2026 - All rights reserved Community Empowerment Lab &nbsp;·&nbsp; For official use only
         </div>
       </div>
     </div>
