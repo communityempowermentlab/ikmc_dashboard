@@ -16,6 +16,8 @@ import {
 } from '../../redux/slices/admissionSlice';
 import './Dashboard.css';
 import './DashboardSkeleton.css';
+import DebugIcon from '../../components/common/DebugIcon';
+import DebugModal from '../../components/common/DebugModal';
 
 const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const MONTH_FULL  = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -77,7 +79,8 @@ const Dashboard = () => {
   const kmcChartInstanceRef   = useRef(null);
 
   // Filters — all multi-select arrays now
-  const { selectedFacilities, selectedLounges, selectedMonths } = useSelector(s => s.filters);
+  const filtersState = useSelector(s => s.filters);
+  const { selectedFacilities, selectedLounges, selectedMonths } = filtersState;
 
   // Admission data
   const {
@@ -98,6 +101,9 @@ const Dashboard = () => {
   const [insightFilter,    setInsightFilter]    = useState(null);  // 'critical' | 'warning' | 'positive' | null
   const [mobileInsightIdx, setMobileInsightIdx] = useState(0);
   const [mobileVisible,    setMobileVisible]    = useState(true);
+  
+  // Debug Modal State
+  const [activeDebugInfo, setActiveDebugInfo] = useState(null);
 
   // ── Section label (dynamic month range) ──────────────────────────────────
   const sectionLabel = useMemo(() => {
@@ -537,8 +543,7 @@ const Dashboard = () => {
           <img src={`${import.meta.env.BASE_URL}cel_logo.png`} alt="CEL · ICMR" className="header-logo" />
           <div className="header-divider" />
           <div>
-            <div className="header-title">KMC Programme — Executive Dashboard</div>
-            <div className="header-sub">Uttar Pradesh · Health &amp; Family Welfare Department</div>
+            <div className="header-title">iKMC Programme — Executive Dashboard</div>
           </div>
         </div>
         <div className="header-right">
@@ -661,7 +666,16 @@ const Dashboard = () => {
 
                 {/* Total Admissions — DYNAMIC */}
                 <div className={`kpi ${kpiColor()}`}>
-                  <div className="kpi-label">Total admissions</div>
+                  <div className="kpi-label">
+                    Total admissions
+                    <DebugIcon onClick={setActiveDebugInfo} info={{
+                      title: 'Total Admissions KPI',
+                      sourceTable: 'babyAdmission',
+                      appliedLogic: 'Count of unique admission IDs (status = 1 OR 2).',
+                      queryLogic: 'SELECT COUNT(id) FROM babyAdmission WHERE facilityId IN (...)',
+                      formulas: ['Total Admissions = COUNT(id)']
+                    }} />
+                  </div>
                   {admLoading.kpi ? (
                     <div className="kpi-val adm-loading">—</div>
                   ) : admKpi ? (
@@ -823,7 +837,16 @@ const Dashboard = () => {
             {/* ROW 2: Admission trend + Inborn/Outborn */}
             <div className="row-2col">
               <div className="card">
-                <div className="card-title">Admission trend — monthly ({sectionLabel})</div>
+                <div className="card-title">
+                  Admission trend — monthly ({sectionLabel})
+                  <DebugIcon onClick={setActiveDebugInfo} info={{
+                    title: 'Admission Trend',
+                    sourceTable: 'babyAdmission',
+                    appliedLogic: 'Monthly grouped count of admissions.',
+                    groupingLogic: 'GROUP BY YEAR(admissionDate), MONTH(admissionDate)',
+                    queryLogic: 'SELECT YEAR(admissionDate), MONTH(admissionDate), COUNT(id) FROM babyAdmission GROUP BY 1, 2'
+                  }} />
+                </div>
                 <div className="chart-wrap chart-fill">
                   <canvas ref={admChartRef} role="img" aria-label="Monthly admission trend chart" />
                   {admLoading.trend && <div className="adm-chart-overlay">Loading trend data…</div>}
@@ -832,7 +855,15 @@ const Dashboard = () => {
               </div>
 
               <div className="card">
-                <div className="card-title">Inborn vs Outborn composition</div>
+                <div className="card-title">
+                  Inborn vs Outborn composition
+                  <DebugIcon onClick={setActiveDebugInfo} info={{
+                    title: 'Inborn vs Outborn Composition',
+                    sourceTable: 'babyAdmission',
+                    appliedLogic: 'Counts grouped by babyType (1=Inborn, 2=Outborn).',
+                    formulas: ['Inborn % = (Inborn / Total) * 100', 'Outborn % = (Outborn / Total) * 100']
+                  }} />
+                </div>
                 <div className="chart-wrap" style={{height:'165px', position:'relative'}}>
                   <canvas ref={donutChartRef} role="img" aria-label="Inborn vs Outborn donut chart" />
                   {admLoading.composition && <div className="adm-chart-overlay">Loading…</div>}
@@ -864,7 +895,15 @@ const Dashboard = () => {
             <div className="row-3col">
               {/* Birth Weight Distribution — DYNAMIC (CSS visualization) */}
               <div className="card">
-                <div className="card-title">Birth weight distribution</div>
+                <div className="card-title">
+                  Birth weight distribution
+                  <DebugIcon onClick={setActiveDebugInfo} info={{
+                    title: 'Birth Weight Distribution',
+                    sourceTable: 'babyAdmission',
+                    appliedLogic: 'Admissions categorized by birthWeight metric.',
+                    formulas: ['VLBW = <1800g', 'LBW = 1800-2499g', 'Normal = >=2500g']
+                  }} />
+                </div>
                 {admLoading.birthWeight ? (
                   <div className="adm-chart-overlay" style={{position:'relative', height:'160px'}}>Loading…</div>
                 ) : !admBw || admBw.total === 0 ? (
@@ -904,7 +943,15 @@ const Dashboard = () => {
 
               {/* Gender Composition — DYNAMIC */}
               <div className="card">
-                <div className="card-title">Gender composition</div>
+                <div className="card-title">
+                  Gender composition
+                  <DebugIcon onClick={setActiveDebugInfo} info={{
+                    title: 'Gender Composition',
+                    sourceTable: 'babyAdmission',
+                    appliedLogic: 'Counts by babyGender (1=Male, 2=Female). Includes Inborn/Outborn split.',
+                    queryLogic: 'SELECT babyGender, babyType, COUNT(id) FROM babyAdmission GROUP BY babyGender, babyType'
+                  }} />
+                </div>
                 {admLoading.gender ? (
                   <div className="adm-chart-overlay" style={{position:'relative',height:'140px'}}>Loading…</div>
                 ) : !admGender || admGender.total === 0 ? (
@@ -955,7 +1002,15 @@ const Dashboard = () => {
 
               {/* KMC Duration Trend — DYNAMIC */}
               <div className="card">
-                <div className="card-title">Avg KMC duration / baby / day</div>
+                <div className="card-title">
+                  Avg KMC duration / baby / day
+                  <DebugIcon onClick={setActiveDebugInfo} info={{
+                    title: 'KMC Duration Trend',
+                    sourceTable: 'kmcTransaction, babyAdmission',
+                    appliedLogic: 'Average KMC hours per baby per day per month.',
+                    formulas: ['Avg Hours = SUM(kmcHours) / SUM(babyDays)']
+                  }} />
+                </div>
                 {(() => {
                   const overallAvg = admKmcDuration.length > 0
                     ? (admKmcDuration.reduce((s, d) => s + d.totalKmcHours, 0) /
@@ -988,14 +1043,17 @@ const Dashboard = () => {
             <div className="row-2col-even">
               {/* ── KMC within 2 hours ── */}
               {[
-                { key: 'kmc', title: 'KMC Initiated within 2 Hours',         icon: '🫀' },
-                { key: 'bf',  title: 'Breastfeeding Initiated within 1 Hour', icon: '🤱' },
-              ].map(({ key, title }) => {
+                { key: 'kmc', title: 'KMC Initiated within 2 Hours',         icon: '🫀', debug: { title: 'Early Care: KMC', sourceTable: 'babyAdmission', formulas: ['KMC < 2h % = (Yes / Total) * 100'] } },
+                { key: 'bf',  title: 'Breastfeeding Initiated within 1 Hour', icon: '🤱', debug: { title: 'Early Care: Breastfeeding', sourceTable: 'babyAdmission', formulas: ['BF < 1h % = (Yes / Total) * 100'] } },
+              ].map(({ key, title, debug }) => {
                 const data    = admEarlyCare?.[key];
                 const loading = admLoading.earlyCare;
                 return (
                   <div key={key} className="card ec-card">
-                    <div className="card-title">{title}</div>
+                    <div className="card-title">
+                      {title}
+                      <DebugIcon onClick={setActiveDebugInfo} info={debug} />
+                    </div>
 
                     {loading && (
                       <div className="ec-empty">Loading data…</div>
@@ -1084,7 +1142,15 @@ const Dashboard = () => {
             <div>
               <div className="section-label">Transportation in KMC Position — {sectionLabel}</div>
               <div className="card tp-card">
-                <div className="card-title">Baby Transportation in KMC Position</div>
+                <div className="card-title">
+                  Baby Transportation in KMC Position
+                  <DebugIcon onClick={setActiveDebugInfo} info={{
+                    title: 'Transportation in KMC',
+                    sourceTable: 'babyAdmission',
+                    appliedLogic: 'Counts based on transportType and kmcTransport position.',
+                    formulas: ['Transferred in KMC % = (Yes / Total Transferred) * 100']
+                  }} />
+                </div>
                 {admLoading.transport ? (
                   <div className="ec-empty">Loading transport data…</div>
                 ) : !admTransport || admTransport.overall.total === 0 ? (
@@ -1146,6 +1212,12 @@ const Dashboard = () => {
             <div className="card">
               <div className="card-title">
                 Discharge outcomes breakdown
+                <DebugIcon onClick={setActiveDebugInfo} info={{
+                  title: 'Discharge Outcomes',
+                  sourceTable: 'babyAdmission',
+                  appliedLogic: 'Discharge categories grouped and counted.',
+                  formulas: ['Mortality % = (Died / Total Discharged) * 100', 'LAMA % = (LAMA / Total Discharged) * 100']
+                }} />
                 {admDischarge && !admLoading.discharge && (
                   <span style={{marginLeft:'8px', fontSize:'11px', fontWeight:500, color:'var(--text-muted)'}}>
                     {admDischarge.totalDischarge.toLocaleString()} total
@@ -1207,7 +1279,15 @@ const Dashboard = () => {
             <div className="card est-card">
               <div className="est-header">
                 <div>
-                  <div className="card-title" style={{marginBottom:'2px'}}>Executive performance summary</div>
+                  <div className="card-title" style={{marginBottom:'2px'}}>
+                    Executive performance summary
+                    <DebugIcon onClick={setActiveDebugInfo} info={{
+                      title: 'Facility Summary Table',
+                      sourceTable: 'babyAdmission, kmcTransaction',
+                      appliedLogic: 'Aggregated monthly table of all key indicators.',
+                      groupingLogic: 'Grouped by Month-Year over the selected period.'
+                    }} />
+                  </div>
                   <div className="est-subtitle">Month-wise indicator comparison · {sectionLabel}</div>
                 </div>
                 <div className="est-legend">
@@ -1458,6 +1538,12 @@ const Dashboard = () => {
           Copyright &copy; 2026 - All rights reserved Community Empowerment Lab &nbsp;·&nbsp; For official use only
         </div>
       </div>
+
+      <DebugModal 
+        info={activeDebugInfo} 
+        onClose={() => setActiveDebugInfo(null)} 
+        filters={filtersState} 
+      />
     </div>
   );
 };
