@@ -2,89 +2,93 @@ const pool = require('../config/db');
 
 // ── Shared helpers ──────────────────────────────────────────────────────────
 
-/** Parse "2026-01,2026-02" → ["2026-01","2026-02"] */
-function parseMonths(raw) {
-    return (raw || '').split(',').map(s => s.trim()).filter(Boolean);
-}
-
-/** Parse "228,229" → ["228","229"] */
 function parseIds(raw) {
     return (raw || '').split(',').map(s => s.trim()).filter(Boolean);
 }
 
-/** Build CONCAT(YEAR…MONTH…) IN (?,?…) clause */
-function buildMonthClause(months, tableAlias = 'ba') {
-    const placeholders = months.map(() => '?').join(',');
-    return {
-        clause: `CONCAT(YEAR(${tableAlias}.admissionDateTime), '-', LPAD(MONTH(${tableAlias}.admissionDateTime), 2, '0')) IN (${placeholders})`,
-        params: months
-    };
-}
-
-/** Build lm.facilityId IN (?,?…) clause */
 function buildFacilityClause(facilityIds) {
     const ph = facilityIds.map(() => '?').join(',');
     return { clause: `lm.facilityId IN (${ph})`, params: facilityIds };
 }
 
-/** Build ba.loungeId IN (?,?…) clause — returns null when empty */
 function buildLoungeClause(loungeIds) {
     if (!loungeIds.length) return null;
     const ph = loungeIds.map(() => '?').join(',');
     return { clause: `ba.loungeId IN (${ph})`, params: loungeIds };
 }
 
-/**
- * Given N selected months (sorted), return the N months immediately before.
- * E.g. ["2026-01","2026-02"] → ["2025-11","2025-12"]
- */
-function getPrecedingMonths(months) {
-    const sorted = [...months].sort();
-    const [yr, mo] = sorted[0].split('-').map(Number);
-    const n = sorted.length;
-    const preceding = [];
-    for (let i = n; i >= 1; i--) {
-        let m = mo - i;
-        let y = yr;
-        while (m < 1) { m += 12; y--; }
-        preceding.push(`${y}-${String(m).padStart(2, '0')}`);
-    }
-    return preceding;
+function parseDateRange(query) {
+    return {
+        startDate: (query.startDate || '').trim(),
+        endDate:   (query.endDate   || '').trim(),
+    };
 }
 
+function buildDateRangeClause(alias, startDate, endDate) {
+    return {
+        clause: `DATE(${alias}.admissionDateTime) BETWEEN ? AND ?`,
+        params: [startDate, endDate],
+    };
+}
+
+function getPrecedingDateRange(startDate, endDate) {
+    const start  = new Date(startDate + 'T00:00:00Z');
+    const end    = new Date(endDate   + 'T00:00:00Z');
+    const diffMs = end.getTime() - start.getTime() + 86400000;
+    const prevEndMs   = start.getTime() - 86400000;
+    const prevStartMs = prevEndMs - diffMs + 86400000;
+    const fmt = (ms) => new Date(ms).toISOString().slice(0, 10);
+    return { prevStartDate: fmt(prevStartMs), prevEndDate: fmt(prevEndMs) };
+}
+
+// ── Earliest admission date ───────────────────────────────────────────────────
+// GET /api/v1/admissions/earliest
+exports.getEarliestAdmissionDate = async (req, res) => {
+    try {
+        const [rows] = await pool.query(
+            `SELECT DATE_FORMAT(MIN(admissionDateTime), '%Y-%m-%d') AS earliest
+             FROM babyAdmission WHERE status IN (1, 2)`
+        );
+        res.json({ earliest: rows[0].earliest });
+    } catch (err) {
+        console.error('Error in getEarliestAdmissionDate:', err);
+        res.status(500).json({ error: 'Server error' });
+    }
+};
+
 // ── KPI ──────────────────────────────────────────────────────────────────────
-// GET /api/v1/admissions/kpi?facilityIds=228&months=2026-05&loungeIds=222
+// GET /api/v1/admissions/kpi?facilityIds=228&startDate=2026-01-01&endDate=2026-05-26&loungeIds=222
 exports.getAdmissionKpi = async (req, res) => {
     try {
-        const { facilityIds: fParam, months: mParam, loungeIds: lParam } = req.query;
-        if (!fParam || !mParam) return res.status(400).json({ error: 'facilityIds and months are required' });
+        const { facilityIds: fParam, loungeIds: lParam } = req.query;
+        const { startDate, endDate } = parseDateRange(req.query);
+        if (!fParam || !startDate || !endDate)
+            return res.status(400).json({ error: 'facilityIds, startDate, endDate are required' });
 
-        const facilityIds  = parseIds(fParam);
-        const months       = parseMonths(mParam);
-        const loungeIds    = parseIds(lParam);
-        const prevMonths   = getPrecedingMonths(months);
+        const facilityIds = parseIds(fParam);
+        const loungeIds   = parseIds(lParam);
+        const { prevStartDate, prevEndDate } = getPrecedingDateRange(startDate, endDate);
 
-        const buildQuery = (mths) => {
+        const buildQuery = (sd, ed) => {
             const { clause: fClause, params: fParams } = buildFacilityClause(facilityIds);
-            const { clause: mClause, params: mParams } = buildMonthClause(mths);
-            let where = `${fClause} AND ba.status IN (1, 2) AND ${mClause}`;
-            const p = [...fParams, ...mParams];
+            const { clause: dClause, params: dParams } = buildDateRangeClause('ba', sd, ed);
+            let where = `${fClause} AND ba.status IN (1, 2) AND ${dClause}`;
+            const p = [...fParams, ...dParams];
             const lClause = buildLoungeClause(loungeIds);
             if (lClause) { where += ` AND ${lClause.clause}`; p.push(...lClause.params); }
             return { where, p };
         };
 
-        const curr = buildQuery(months);
-        const prev = buildQuery(prevMonths);
+        const curr = buildQuery(startDate, endDate);
+        const prev = buildQuery(prevStartDate, prevEndDate);
 
         const [[currRows], [prevRows]] = await Promise.all([
             pool.query(`SELECT COUNT(*) AS count FROM babyAdmission ba JOIN loungeMaster lm ON ba.loungeId = lm.loungeId WHERE ${curr.where}`, curr.p),
-            pool.query(`SELECT COUNT(*) AS count FROM babyAdmission ba JOIN loungeMaster lm ON ba.loungeId = lm.loungeId WHERE ${prev.where}`, prev.p)
+            pool.query(`SELECT COUNT(*) AS count FROM babyAdmission ba JOIN loungeMaster lm ON ba.loungeId = lm.loungeId WHERE ${prev.where}`, prev.p),
         ]);
 
         const current  = parseInt(currRows[0].count);
         const previous = parseInt(prevRows[0].count);
-
         let percentChange = 0, direction = 'neutral';
         if (previous > 0) {
             percentChange = ((current - previous) / previous) * 100;
@@ -97,8 +101,8 @@ exports.getAdmissionKpi = async (req, res) => {
             current, previous,
             percentChange: parseFloat(percentChange.toFixed(1)),
             direction,
-            currentPeriods: months,
-            previousPeriods: prevMonths
+            currentPeriod:  { startDate, endDate },
+            previousPeriod: { startDate: prevStartDate, endDate: prevEndDate },
         });
     } catch (err) {
         console.error('Error in getAdmissionKpi:', err);
@@ -107,20 +111,21 @@ exports.getAdmissionKpi = async (req, res) => {
 };
 
 // ── TREND ─────────────────────────────────────────────────────────────────────
-// GET /api/v1/admissions/trend?facilityIds=228&months=2026-01,2026-02&loungeIds=222
+// GET /api/v1/admissions/trend?facilityIds=228&startDate=...&endDate=...
 exports.getAdmissionTrend = async (req, res) => {
     try {
-        const { facilityIds: fParam, months: mParam, loungeIds: lParam } = req.query;
-        if (!fParam || !mParam) return res.status(400).json({ error: 'facilityIds and months are required' });
+        const { facilityIds: fParam, loungeIds: lParam } = req.query;
+        const { startDate, endDate } = parseDateRange(req.query);
+        if (!fParam || !startDate || !endDate)
+            return res.status(400).json({ error: 'facilityIds, startDate, endDate are required' });
 
         const facilityIds = parseIds(fParam);
-        const months      = parseMonths(mParam);
         const loungeIds   = parseIds(lParam);
 
         const { clause: fClause, params: fParams } = buildFacilityClause(facilityIds);
-        const { clause: mClause, params: mParams } = buildMonthClause(months);
-        let where = `${fClause} AND ba.status IN (1, 2) AND ${mClause}`;
-        const params = [...fParams, ...mParams];
+        const { clause: dClause, params: dParams } = buildDateRangeClause('ba', startDate, endDate);
+        let where = `${fClause} AND ba.status IN (1, 2) AND ${dClause}`;
+        const params = [...fParams, ...dParams];
         const lClause = buildLoungeClause(loungeIds);
         if (lClause) { where += ` AND ${lClause.clause}`; params.push(...lClause.params); }
 
@@ -141,28 +146,27 @@ exports.getAdmissionTrend = async (req, res) => {
 };
 
 // ── COMPOSITION ───────────────────────────────────────────────────────────────
-// GET /api/v1/admissions/composition?facilityIds=228&months=2026-05&loungeIds=222
 exports.getAdmissionComposition = async (req, res) => {
     try {
-        const { facilityIds: fParam, months: mParam, loungeIds: lParam } = req.query;
-        if (!fParam || !mParam) return res.status(400).json({ error: 'facilityIds and months are required' });
+        const { facilityIds: fParam, loungeIds: lParam } = req.query;
+        const { startDate, endDate } = parseDateRange(req.query);
+        if (!fParam || !startDate || !endDate)
+            return res.status(400).json({ error: 'facilityIds, startDate, endDate are required' });
 
         const facilityIds = parseIds(fParam);
-        const months      = parseMonths(mParam);
         const loungeIds   = parseIds(lParam);
 
         const { clause: fClause, params: fParams } = buildFacilityClause(facilityIds);
-        const { clause: mClause, params: mParams } = buildMonthClause(months);
-        let where = `${fClause} AND ba.status IN (1, 2) AND ${mClause} AND ba.typeOfBorn IN ('Inborn','Outborn')`;
-        const params = [...fParams, ...mParams];
+        const { clause: dClause, params: dParams } = buildDateRangeClause('ba', startDate, endDate);
+        let where = `${fClause} AND ba.status IN (1, 2) AND ${dClause} AND ba.typeOfBorn IN ('Inborn','Outborn')`;
+        const params = [...fParams, ...dParams];
         const lClause = buildLoungeClause(loungeIds);
         if (lClause) { where += ` AND ${lClause.clause}`; params.push(...lClause.params); }
 
         const [rows] = await pool.query(
             `SELECT ba.typeOfBorn, COUNT(*) AS count
              FROM babyAdmission ba JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
-             WHERE ${where}
-             GROUP BY ba.typeOfBorn`,
+             WHERE ${where} GROUP BY ba.typeOfBorn`,
             params
         );
 
@@ -171,7 +175,6 @@ exports.getAdmissionComposition = async (req, res) => {
             if (row.typeOfBorn === 'Inborn')  inborn  = parseInt(row.count);
             if (row.typeOfBorn === 'Outborn') outborn = parseInt(row.count);
         }
-
         res.json({ inborn, outborn, total: inborn + outborn });
     } catch (err) {
         console.error('Error in getAdmissionComposition:', err);
@@ -180,36 +183,32 @@ exports.getAdmissionComposition = async (req, res) => {
 };
 
 // ── DISCHARGE OUTCOMES ───────────────────────────────────────────────────────
-// GET /api/v1/admissions/discharge?facilityIds=228&months=2026-01&loungeIds=222
-// Returns each discharge category split by Inborn/Outborn, plus total + LAMA/Died KPIs.
 exports.getAdmissionDischarge = async (req, res) => {
     try {
-        const { facilityIds: fParam, months: mParam, loungeIds: lParam } = req.query;
-        if (!fParam || !mParam) return res.status(400).json({ error: 'facilityIds and months are required' });
+        const { facilityIds: fParam, loungeIds: lParam } = req.query;
+        const { startDate, endDate } = parseDateRange(req.query);
+        if (!fParam || !startDate || !endDate)
+            return res.status(400).json({ error: 'facilityIds, startDate, endDate are required' });
 
         const facilityIds = parseIds(fParam);
-        const months      = parseMonths(mParam);
         const loungeIds   = parseIds(lParam);
 
         const { clause: fClause, params: fParams } = buildFacilityClause(facilityIds);
-        const { clause: mClause, params: mParams } = buildMonthClause(months);
-        let where = `${fClause} AND ba.status IN (1, 2) AND ${mClause}
+        const { clause: dClause, params: dParams } = buildDateRangeClause('ba', startDate, endDate);
+        let where = `${fClause} AND ba.status IN (1, 2) AND ${dClause}
                      AND ba.typeOfDischarge IS NOT NULL AND ba.typeOfDischarge != ''`;
-        const params = [...fParams, ...mParams];
+        const params = [...fParams, ...dParams];
         const lClause = buildLoungeClause(loungeIds);
         if (lClause) { where += ` AND ${lClause.clause}`; params.push(...lClause.params); }
 
         const [rows] = await pool.query(
             `SELECT ba.typeOfDischarge, ba.typeOfBorn, COUNT(*) AS count
-             FROM babyAdmission ba
-             JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
+             FROM babyAdmission ba JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
              WHERE ${where}
-             GROUP BY ba.typeOfDischarge, ba.typeOfBorn
-             ORDER BY ba.typeOfDischarge`,
+             GROUP BY ba.typeOfDischarge, ba.typeOfBorn ORDER BY ba.typeOfDischarge`,
             params
         );
 
-        // Aggregate into category map
         const catMap = {};
         for (const row of rows) {
             const key = row.typeOfDischarge;
@@ -225,7 +224,6 @@ exports.getAdmissionDischarge = async (req, res) => {
             .sort((a, b) => b.total - a.total);
 
         const totalDischarge = categories.reduce((s, c) => s + c.total, 0);
-
         categories.forEach(c => {
             c.pct = totalDischarge > 0 ? parseFloat(((c.total / totalDischarge) * 100).toFixed(1)) : 0;
         });
@@ -234,12 +232,11 @@ exports.getAdmissionDischarge = async (req, res) => {
         const diedRow = categories.find(c => c.label.toLowerCase() === 'died');
 
         res.json({
-            categories,
-            totalDischarge,
-            lamaCount: lamaRow?.total  || 0,
-            lamaPct:   lamaRow ? parseFloat(((lamaRow.total  / (totalDischarge || 1)) * 100).toFixed(1)) : 0,
-            diedCount: diedRow?.total  || 0,
-            diedPct:   diedRow ? parseFloat(((diedRow.total  / (totalDischarge || 1)) * 100).toFixed(1)) : 0,
+            categories, totalDischarge,
+            lamaCount: lamaRow?.total || 0,
+            lamaPct:   lamaRow ? parseFloat(((lamaRow.total / (totalDischarge || 1)) * 100).toFixed(1)) : 0,
+            diedCount: diedRow?.total || 0,
+            diedPct:   diedRow ? parseFloat(((diedRow.total / (totalDischarge || 1)) * 100).toFixed(1)) : 0,
         });
     } catch (err) {
         console.error('Error in getAdmissionDischarge:', err);
@@ -248,23 +245,20 @@ exports.getAdmissionDischarge = async (req, res) => {
 };
 
 // ── BIRTH WEIGHT ──────────────────────────────────────────────────────────────
-// GET /api/v1/admissions/birthweight?facilityIds=228&months=2026-01,2026-02&loungeIds=222
-//
-// Source: babyDailyWeight (weightType=1) LEFT JOINed to babyAdmission.
-// All admitted babies are counted; those without a weightType=1 record = "Not available".
 exports.getAdmissionBirthWeight = async (req, res) => {
     try {
-        const { facilityIds: fParam, months: mParam, loungeIds: lParam } = req.query;
-        if (!fParam || !mParam) return res.status(400).json({ error: 'facilityIds and months are required' });
+        const { facilityIds: fParam, loungeIds: lParam } = req.query;
+        const { startDate, endDate } = parseDateRange(req.query);
+        if (!fParam || !startDate || !endDate)
+            return res.status(400).json({ error: 'facilityIds, startDate, endDate are required' });
 
         const facilityIds = parseIds(fParam);
-        const months      = parseMonths(mParam);
         const loungeIds   = parseIds(lParam);
 
         const { clause: fClause, params: fParams } = buildFacilityClause(facilityIds);
-        const { clause: mClause, params: mParams } = buildMonthClause(months);
-        let where = `${fClause} AND ba.status IN (1, 2) AND ${mClause}`;
-        const params = [...fParams, ...mParams];
+        const { clause: dClause, params: dParams } = buildDateRangeClause('ba', startDate, endDate);
+        let where = `${fClause} AND ba.status IN (1, 2) AND ${dClause}`;
+        const params = [...fParams, ...dParams];
         const lClause = buildLoungeClause(loungeIds);
         if (lClause) { where += ` AND ${lClause.clause}`; params.push(...lClause.params); }
 
@@ -279,10 +273,8 @@ exports.getAdmissionBirthWeight = async (req, res) => {
                 COUNT(*) AS count
              FROM babyAdmission ba
              JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
-             LEFT JOIN babyDailyWeight bdw
-               ON bdw.babyAdmissionId = ba.id AND bdw.weightType = 1
-             WHERE ${where}
-             GROUP BY category`,
+             LEFT JOIN babyDailyWeight bdw ON bdw.babyAdmissionId = ba.id AND bdw.weightType = 1
+             WHERE ${where} GROUP BY category`,
             params
         );
 
@@ -294,7 +286,6 @@ exports.getAdmissionBirthWeight = async (req, res) => {
             if (row.category === 'gte2500')      gte2500      = c;
             if (row.category === 'na')           na           = c;
         }
-
         res.json({ lt1800, btw1800_2499, gte2500, na, total: lt1800 + btw1800_2499 + gte2500 + na });
     } catch (err) {
         console.error('Error in getAdmissionBirthWeight:', err);
@@ -303,33 +294,28 @@ exports.getAdmissionBirthWeight = async (req, res) => {
 };
 
 // ── EARLY CARE KPI ────────────────────────────────────────────────────────────
-// GET /api/v1/admissions/earlyCare?facilityIds=228&months=2026-01&loungeIds=222
-// Returns KMC-within-2h and BF-within-1h compliance split by Inborn/Outborn.
-// Source: babyRegistration joined to babyAdmission (11=Yes, 12=No).
 exports.getEarlyCareKpi = async (req, res) => {
     try {
-        const { facilityIds: fParam, months: mParam, loungeIds: lParam } = req.query;
-        if (!fParam || !mParam) return res.status(400).json({ error: 'facilityIds and months are required' });
+        const { facilityIds: fParam, loungeIds: lParam } = req.query;
+        const { startDate, endDate } = parseDateRange(req.query);
+        if (!fParam || !startDate || !endDate)
+            return res.status(400).json({ error: 'facilityIds, startDate, endDate are required' });
 
         const facilityIds = parseIds(fParam);
-        const months      = parseMonths(mParam);
         const loungeIds   = parseIds(lParam);
 
         const { clause: fClause, params: fParams } = buildFacilityClause(facilityIds);
-        const { clause: mClause, params: mParams } = buildMonthClause(months);
-        let where = `${fClause} AND ba.status IN (1, 2) AND ${mClause}
+        const { clause: dClause, params: dParams } = buildDateRangeClause('ba', startDate, endDate);
+        let where = `${fClause} AND ba.status IN (1, 2) AND ${dClause}
                      AND ba.typeOfBorn IN ('Inborn','Outborn')
                      AND br.kmcInitiated2Hour IN (11, 12)
                      AND br.breastfeedInitiated1Hour IN (11, 12)`;
-        const params = [...fParams, ...mParams];
+        const params = [...fParams, ...dParams];
         const lClause = buildLoungeClause(loungeIds);
         if (lClause) { where += ` AND ${lClause.clause}`; params.push(...lClause.params); }
 
         const [rows] = await pool.query(
-            `SELECT ba.typeOfBorn,
-                    br.kmcInitiated2Hour,
-                    br.breastfeedInitiated1Hour,
-                    COUNT(*) AS cnt
+            `SELECT ba.typeOfBorn, br.kmcInitiated2Hour, br.breastfeedInitiated1Hour, COUNT(*) AS cnt
              FROM babyAdmission ba
              JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
              JOIN babyRegistration br ON br.babyId = ba.babyId
@@ -342,7 +328,7 @@ exports.getEarlyCareKpi = async (req, res) => {
         const bf  = { inbornYes: 0, inbornNo: 0, outbornYes: 0, outbornNo: 0 };
 
         for (const row of rows) {
-            const n       = parseInt(row.cnt);
+            const n = parseInt(row.cnt);
             const isInborn = row.typeOfBorn === 'Inborn';
             if (row.kmcInitiated2Hour === 11)        isInborn ? (kmc.inbornYes  += n) : (kmc.outbornYes  += n);
             else                                     isInborn ? (kmc.inbornNo   += n) : (kmc.outbornNo   += n);
@@ -354,7 +340,6 @@ exports.getEarlyCareKpi = async (req, res) => {
             const t = yes + no;
             return t > 0 ? parseFloat(((yes / t) * 100).toFixed(1)) : 0;
         };
-
         const enrich = (obj) => ({
             ...obj,
             inbornTotal:  obj.inbornYes  + obj.inbornNo,
@@ -375,30 +360,27 @@ exports.getEarlyCareKpi = async (req, res) => {
 };
 
 // ── TRANSPORT KPI ─────────────────────────────────────────────────────────────
-// GET /api/v1/admissions/transport?facilityIds=228&months=2026-01&loungeIds=222
-// Returns baby-transportation-in-KMC-position split: Mother (11) vs Surrogate (12),
-// overall and Inborn-only.
 exports.getTransportKpi = async (req, res) => {
     try {
-        const { facilityIds: fParam, months: mParam, loungeIds: lParam } = req.query;
-        if (!fParam || !mParam) return res.status(400).json({ error: 'facilityIds and months are required' });
+        const { facilityIds: fParam, loungeIds: lParam } = req.query;
+        const { startDate, endDate } = parseDateRange(req.query);
+        if (!fParam || !startDate || !endDate)
+            return res.status(400).json({ error: 'facilityIds, startDate, endDate are required' });
 
         const facilityIds = parseIds(fParam);
-        const months      = parseMonths(mParam);
         const loungeIds   = parseIds(lParam);
 
         const { clause: fClause, params: fParams } = buildFacilityClause(facilityIds);
-        const { clause: mClause, params: mParams } = buildMonthClause(months);
-        let where = `${fClause} AND ba.status IN (1, 2) AND ${mClause}
+        const { clause: dClause, params: dParams } = buildDateRangeClause('ba', startDate, endDate);
+        let where = `${fClause} AND ba.status IN (1, 2) AND ${dClause}
                      AND ba.babyTransferredCondition IN (11, 12)`;
-        const params = [...fParams, ...mParams];
+        const params = [...fParams, ...dParams];
         const lClause = buildLoungeClause(loungeIds);
         if (lClause) { where += ` AND ${lClause.clause}`; params.push(...lClause.params); }
 
         const [rows] = await pool.query(
             `SELECT ba.typeOfBorn, ba.babyTransferredCondition, COUNT(*) AS count
-             FROM babyAdmission ba
-             JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
+             FROM babyAdmission ba JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
              WHERE ${where}
              GROUP BY ba.typeOfBorn, ba.babyTransferredCondition`,
             params
@@ -438,26 +420,23 @@ exports.getTransportKpi = async (req, res) => {
 };
 
 // ── KMC DURATION TREND ────────────────────────────────────────────────────────
-// GET /api/v1/admissions/kmcDuration?facilityIds=228&months=2026-01,2026-02&loungeIds=222
-// Filters by bdk.kmcDate month (not admission month) so chart x-axis matches
-// selected period. Duration stored as HH:MM strings; converted to hours.
 exports.getKmcDurationTrend = async (req, res) => {
     try {
-        const { facilityIds: fParam, months: mParam, loungeIds: lParam } = req.query;
-        if (!fParam || !mParam) return res.status(400).json({ error: 'facilityIds and months are required' });
+        const { facilityIds: fParam, loungeIds: lParam } = req.query;
+        const { startDate, endDate } = parseDateRange(req.query);
+        if (!fParam || !startDate || !endDate)
+            return res.status(400).json({ error: 'facilityIds, startDate, endDate are required' });
 
         const facilityIds = parseIds(fParam);
-        const months      = parseMonths(mParam);
         const loungeIds   = parseIds(lParam);
 
         const { clause: fClause, params: fParams } = buildFacilityClause(facilityIds);
-        const kmcMonthClause = `CONCAT(YEAR(bdk.kmcDate), '-', LPAD(MONTH(bdk.kmcDate), 2, '0')) IN (${months.map(() => '?').join(',')})`;
-        let where = `${fClause} AND ba.status IN (1, 2) AND ${kmcMonthClause}
+        let where = `${fClause} AND ba.status IN (1, 2) AND DATE(bdk.kmcDate) BETWEEN ? AND ?
                      AND (
                        (bdk.kmcDurationByMother IS NOT NULL AND bdk.kmcDurationByMother != '') OR
                        (bdk.kmcDurationByOther  IS NOT NULL AND bdk.kmcDurationByOther  != '')
                      )`;
-        const params = [...fParams, ...months];
+        const params = [...fParams, startDate, endDate];
         const lClause = buildLoungeClause(loungeIds);
         if (lClause) { where += ` AND ${lClause.clause}`; params.push(...lClause.params); }
 
@@ -474,8 +453,7 @@ exports.getKmcDurationTrend = async (req, res) => {
              JOIN babyAdmission ba ON bdk.babyAdmissionId = ba.id
              JOIN loungeMaster  lm ON ba.loungeId = lm.loungeId
              WHERE ${where}
-             GROUP BY yr, mo
-             ORDER BY yr ASC, mo ASC`,
+             GROUP BY yr, mo ORDER BY yr ASC, mo ASC`,
             params
         );
 
@@ -495,26 +473,24 @@ exports.getKmcDurationTrend = async (req, res) => {
 };
 
 // ── EXECUTIVE SUMMARY TABLE ───────────────────────────────────────────────────
-// GET /api/v1/admissions/summary?facilityIds=228&months=2026-01,2026-02&loungeIds=222
-// Returns all 8 core indicators per admission-month for the exec summary table.
+// Groups by admission-month within the date range; months derived from actual data.
 exports.getSummaryTable = async (req, res) => {
     try {
-        const { facilityIds: fParam, months: mParam, loungeIds: lParam } = req.query;
-        if (!fParam || !mParam) return res.status(400).json({ error: 'facilityIds and months are required' });
+        const { facilityIds: fParam, loungeIds: lParam } = req.query;
+        const { startDate, endDate } = parseDateRange(req.query);
+        if (!fParam || !startDate || !endDate)
+            return res.status(400).json({ error: 'facilityIds, startDate, endDate are required' });
 
         const facilityIds = parseIds(fParam);
-        const months      = parseMonths(mParam).sort();
         const loungeIds   = parseIds(lParam);
 
         const { clause: fClause, params: fParams } = buildFacilityClause(facilityIds);
-        const { clause: mClause, params: mParams } = buildMonthClause(months);
-
-        let baseWhere  = `${fClause} AND ba.status IN (1, 2) AND ${mClause}`;
-        const basePrms = [...fParams, ...mParams];
+        const { clause: dClause, params: dParams } = buildDateRangeClause('ba', startDate, endDate);
+        let baseWhere  = `${fClause} AND ba.status IN (1, 2) AND ${dClause}`;
+        const basePrms = [...fParams, ...dParams];
         const lClause  = buildLoungeClause(loungeIds);
         if (lClause) { baseWhere += ` AND ${lClause.clause}`; basePrms.push(...lClause.params); }
 
-        // Q1: Admissions + BW<1800 + Discharges — grouped by admission month
         const q1 = pool.query(
             `SELECT
                CONCAT(YEAR(ba.admissionDateTime), '-', LPAD(MONTH(ba.admissionDateTime), 2, '0')) AS mKey,
@@ -529,7 +505,6 @@ exports.getSummaryTable = async (req, res) => {
             basePrms
         );
 
-        // Q2: SSC<2h + BF<1h compliance — grouped by admission month
         const q2Where = baseWhere +
             ` AND ba.typeOfBorn IN ('Inborn','Outborn')
               AND br.kmcInitiated2Hour IN (11, 12)
@@ -548,12 +523,11 @@ exports.getSummaryTable = async (req, res) => {
             basePrms
         );
 
-        // Q3: Avg KMC duration — grouped by kmc-date month
-        const kmcMClause = `CONCAT(YEAR(bdk.kmcDate), '-', LPAD(MONTH(bdk.kmcDate), 2, '0')) IN (${months.map(() => '?').join(',')})`;
-        let kmcWhere = `${fClause} AND ba.status IN (1, 2) AND ${kmcMClause}
+        const { clause: fClause3, params: fParams3 } = buildFacilityClause(facilityIds);
+        let kmcWhere = `${fClause3} AND ba.status IN (1, 2) AND DATE(bdk.kmcDate) BETWEEN ? AND ?
                         AND ((bdk.kmcDurationByMother IS NOT NULL AND bdk.kmcDurationByMother != '')
                           OR (bdk.kmcDurationByOther  IS NOT NULL AND bdk.kmcDurationByOther  != ''))`;
-        const kmcPrms = [...fParams, ...months];
+        const kmcPrms = [...fParams3, startDate, endDate];
         if (lClause) { kmcWhere += ` AND ${lClause.clause}`; kmcPrms.push(...lClause.params); }
         const q3 = pool.query(
             `SELECT
@@ -571,7 +545,6 @@ exports.getSummaryTable = async (req, res) => {
             kmcPrms
         );
 
-        // Q4: Baby transport in KMC position (mother/surrogate) — grouped by admission month
         const q4Where = baseWhere + ` AND ba.babyTransferredCondition IN (11, 12)`;
         const q4 = pool.query(
             `SELECT
@@ -579,8 +552,7 @@ exports.getSummaryTable = async (req, res) => {
                SUM(CASE WHEN ba.babyTransferredCondition = 11 THEN 1 ELSE 0 END) AS motherCnt,
                SUM(CASE WHEN ba.babyTransferredCondition = 12 THEN 1 ELSE 0 END) AS surrogateCnt,
                COUNT(*) AS tpTotal
-             FROM babyAdmission ba
-             JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
+             FROM babyAdmission ba JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
              WHERE ${q4Where}
              GROUP BY mKey ORDER BY mKey`,
             basePrms
@@ -589,6 +561,7 @@ exports.getSummaryTable = async (req, res) => {
         const [[q1Rows], [q2Rows], [q3Rows], [q4Rows]] = await Promise.all([q1, q2, q3, q4]);
 
         const pct = (n, d) => d > 0 ? parseFloat(((n / d) * 100).toFixed(1)) : 0;
+        const months = q1Rows.map(r => r.mKey).sort();
 
         const admMap = {}, bwMap = {}, dcMap = {};
         for (const r of q1Rows) {
@@ -640,24 +613,22 @@ exports.getSummaryTable = async (req, res) => {
 };
 
 // ── GENDER COMPOSITION ────────────────────────────────────────────────────────
-// GET /api/v1/admissions/gender?facilityIds=228&months=2026-01&loungeIds=222
-// Returns Male/Female counts split by Inborn/Outborn.
-// Source: babyRegistration.babyGender joined to babyAdmission.
 exports.getGenderComposition = async (req, res) => {
     try {
-        const { facilityIds: fParam, months: mParam, loungeIds: lParam } = req.query;
-        if (!fParam || !mParam) return res.status(400).json({ error: 'facilityIds and months are required' });
+        const { facilityIds: fParam, loungeIds: lParam } = req.query;
+        const { startDate, endDate } = parseDateRange(req.query);
+        if (!fParam || !startDate || !endDate)
+            return res.status(400).json({ error: 'facilityIds, startDate, endDate are required' });
 
         const facilityIds = parseIds(fParam);
-        const months      = parseMonths(mParam);
         const loungeIds   = parseIds(lParam);
 
         const { clause: fClause, params: fParams } = buildFacilityClause(facilityIds);
-        const { clause: mClause, params: mParams } = buildMonthClause(months);
-        let where = `${fClause} AND ba.status IN (1, 2) AND ${mClause}
+        const { clause: dClause, params: dParams } = buildDateRangeClause('ba', startDate, endDate);
+        let where = `${fClause} AND ba.status IN (1, 2) AND ${dClause}
                      AND br.babyGender IN ('Male', 'Female')
                      AND ba.typeOfBorn IN ('Inborn', 'Outborn')`;
-        const params = [...fParams, ...mParams];
+        const params = [...fParams, ...dParams];
         const lClause = buildLoungeClause(loungeIds);
         if (lClause) { where += ` AND ${lClause.clause}`; params.push(...lClause.params); }
 
@@ -676,7 +647,7 @@ exports.getGenderComposition = async (req, res) => {
             female: { inborn: 0, outborn: 0 },
         };
         for (const row of rows) {
-            const key    = row.babyGender === 'Male' ? 'male' : 'female';
+            const key     = row.babyGender === 'Male' ? 'male' : 'female';
             const bornKey = row.typeOfBorn === 'Inborn' ? 'inborn' : 'outborn';
             acc[key][bornKey] = parseInt(row.count);
         }
@@ -694,5 +665,236 @@ exports.getGenderComposition = async (req, res) => {
     } catch (err) {
         console.error('Error in getGenderComposition:', err);
         res.status(500).json({ error: 'Server error fetching gender composition' });
+    }
+};
+
+// ── STAY DURATION ANALYTICS ───────────────────────────────────────────────────
+// GET /api/v1/admissions/stayDuration?facilityIds=228&startDate=...&endDate=...&loungeIds=222
+// Null dateOfDischarge → uses NOW() as proxy (active admission).
+// Negative durations are excluded (data integrity guard).
+exports.getStayDuration = async (req, res) => {
+    try {
+        const { facilityIds: fParam, loungeIds: lParam } = req.query;
+        const { startDate, endDate } = parseDateRange(req.query);
+        if (!fParam || !startDate || !endDate)
+            return res.status(400).json({ error: 'facilityIds, startDate, endDate are required' });
+
+        const facilityIds = parseIds(fParam);
+        const loungeIds   = parseIds(lParam);
+
+        const { clause: fClause, params: fParams } = buildFacilityClause(facilityIds);
+        const { clause: dClause, params: dParams } = buildDateRangeClause('ba', startDate, endDate);
+        let where = `${fClause} AND ba.status IN (1, 2) AND ${dClause}
+                     AND ba.admissionDateTime IS NOT NULL`;
+        const params = [...fParams, ...dParams];
+        const lClause = buildLoungeClause(loungeIds);
+        if (lClause) { where += ` AND ${lClause.clause}`; params.push(...lClause.params); }
+
+        const [rows] = await pool.query(
+            `SELECT
+               CASE
+                 WHEN stay_hours <= 24 THEN 'h0_24'
+                 WHEN stay_hours <= 48 THEN 'h24_48'
+                 WHEN stay_hours <= 72 THEN 'h48_72'
+                 ELSE                       'h72plus'
+               END AS category,
+               COUNT(*) AS count
+             FROM (
+               SELECT TIMESTAMPDIFF(HOUR, ba.admissionDateTime,
+                        COALESCE(ba.dateOfDischarge, NOW())) AS stay_hours
+               FROM babyAdmission ba
+               JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
+               WHERE ${where}
+                 AND TIMESTAMPDIFF(HOUR, ba.admissionDateTime,
+                       COALESCE(ba.dateOfDischarge, NOW())) >= 0
+             ) t
+             GROUP BY category`,
+            params
+        );
+
+        const acc = { h0_24: 0, h24_48: 0, h48_72: 0, h72plus: 0 };
+        for (const r of rows) {
+            if (acc[r.category] !== undefined) acc[r.category] = parseInt(r.count);
+        }
+        const total = Object.values(acc).reduce((s, v) => s + v, 0);
+        const pct   = (n) => total > 0 ? parseFloat(((n / total) * 100).toFixed(1)) : 0;
+
+        res.json({
+            categories: [
+                { key: 'h0_24',   label: '0 – 24 Hours',      count: acc.h0_24,   pct: pct(acc.h0_24)   },
+                { key: 'h24_48',  label: '24 – 48 Hours',      count: acc.h24_48,  pct: pct(acc.h24_48)  },
+                { key: 'h48_72',  label: '48 – 72 Hours',      count: acc.h48_72,  pct: pct(acc.h48_72)  },
+                { key: 'h72plus', label: 'More than 72 Hours', count: acc.h72plus, pct: pct(acc.h72plus) },
+            ],
+            total,
+        });
+    } catch (err) {
+        console.error('Error in getStayDuration:', err);
+        res.status(500).json({ error: 'Server error fetching stay duration' });
+    }
+};
+
+// ── WEIGHT STABILITY ANALYTICS ────────────────────────────────────────────────
+// GET /api/v1/admissions/weightStability?facilityIds=&startDate=&endDate=&loungeIds=
+// Compares birth weight (weightType=1) vs discharge weight (weightType=4) per admission.
+// Returns Gain (diff>0), Stable (diff=0), Loss (diff<0) — only babies with both weights.
+exports.getWeightStability = async (req, res) => {
+    try {
+        const { facilityIds: fParam, loungeIds: lParam } = req.query;
+        const { startDate, endDate } = parseDateRange(req.query);
+        if (!fParam || !startDate || !endDate)
+            return res.status(400).json({ error: 'facilityIds, startDate, endDate are required' });
+
+        const facilityIds = parseIds(fParam);
+        const loungeIds   = parseIds(lParam);
+
+        const { clause: fClause, params: fParams } = buildFacilityClause(facilityIds);
+        const { clause: dClause, params: dParams } = buildDateRangeClause('ba', startDate, endDate);
+        let where = `${fClause} AND ba.status IN (1, 2) AND ${dClause}`;
+        const params = [...fParams, ...dParams];
+        const lClause = buildLoungeClause(loungeIds);
+        if (lClause) { where += ` AND ${lClause.clause}`; params.push(...lClause.params); }
+
+        // Total admissions in range (denominator for coverage)
+        const [totalRows] = await pool.query(
+            `SELECT COUNT(*) AS total
+             FROM babyAdmission ba JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
+             WHERE ${where}`,
+            params
+        );
+        const totalAdmissions = parseInt(totalRows[0].total);
+
+        // Weight stability: join birth weight (type=1) and discharge weight (type=4)
+        const [rows] = await pool.query(
+            `SELECT
+               CASE
+                 WHEN discharge_wt > birth_wt THEN 'gain'
+                 WHEN discharge_wt < birth_wt THEN 'loss'
+                 ELSE                               'stable'
+               END AS category,
+               COUNT(*) AS count
+             FROM (
+               SELECT
+                 ba.id,
+                 (SELECT bdw1.babyWeight FROM babyDailyWeight bdw1
+                  WHERE bdw1.babyAdmissionId = ba.id AND bdw1.weightType = 1
+                  ORDER BY bdw1.id LIMIT 1)                     AS birth_wt,
+                 (SELECT bdw4.babyWeight FROM babyDailyWeight bdw4
+                  WHERE bdw4.babyAdmissionId = ba.id AND bdw4.weightType = 4
+                  ORDER BY bdw4.id DESC LIMIT 1)                AS discharge_wt
+               FROM babyAdmission ba
+               JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
+               WHERE ${where}
+             ) t
+             WHERE birth_wt IS NOT NULL AND discharge_wt IS NOT NULL
+             GROUP BY category`,
+            [...params]
+        );
+
+        const acc = { gain: 0, stable: 0, loss: 0 };
+        for (const r of rows) {
+            if (acc[r.category] !== undefined) acc[r.category] = parseInt(r.count);
+        }
+        const totalWithData = acc.gain + acc.stable + acc.loss;
+        const pct = (n) => totalWithData > 0 ? parseFloat(((n / totalWithData) * 100).toFixed(1)) : 0;
+
+        res.json({
+            categories: [
+                { key: 'gain',   label: 'Weight Gain',   count: acc.gain,   pct: pct(acc.gain)   },
+                { key: 'stable', label: 'Weight Stable', count: acc.stable, pct: pct(acc.stable) },
+                { key: 'loss',   label: 'Weight Loss',   count: acc.loss,   pct: pct(acc.loss)   },
+            ],
+            totalWithData,
+            totalAdmissions,
+            coverage: totalAdmissions > 0
+                ? parseFloat(((totalWithData / totalAdmissions) * 100).toFixed(1))
+                : 0,
+        });
+    } catch (err) {
+        console.error('Error in getWeightStability:', err);
+        res.status(500).json({ error: 'Server error fetching weight stability' });
+    }
+};
+
+// ── BREASTFEEDING ANALYTICS ───────────────────────────────────────────────────
+// GET /api/v1/admissions/breastfeeding?facilityIds=&startDate=&endDate=&loungeIds=
+// Classifies each baby as Exclusive (only methods 1 or 2 across all records),
+// Non-Exclusive (any other method found), or No Data (no nutrition records).
+// breastFeedMethod stored as JSON array string e.g. ["2"] or ["6","2","4"]
+exports.getBreastfeeding = async (req, res) => {
+    try {
+        const { facilityIds: fParam, loungeIds: lParam } = req.query;
+        const { startDate, endDate } = parseDateRange(req.query);
+        if (!fParam || !startDate || !endDate)
+            return res.status(400).json({ error: 'facilityIds, startDate, endDate are required' });
+
+        const facilityIds = parseIds(fParam);
+        const loungeIds   = parseIds(lParam);
+
+        const { clause: fClause, params: fParams } = buildFacilityClause(facilityIds);
+        const { clause: dClause, params: dParams } = buildDateRangeClause('ba', startDate, endDate);
+        let where = `${fClause} AND ba.status IN (1, 2) AND ${dClause}`;
+        const params = [...fParams, ...dParams];
+        const lClause = buildLoungeClause(loungeIds);
+        if (lClause) { where += ` AND ${lClause.clause}`; params.push(...lClause.params); }
+
+        // Classify each baby:
+        //   non_exclusive: any nutrition record has a method NOT in ("1","2")
+        //   exclusive:     has records, all methods are only 1 or 2
+        //   no_data:       no nutrition records with valid breastFeedMethod
+        const [rows] = await pool.query(
+            `SELECT
+               CASE
+                 WHEN non_excl_count > 0 THEN 'non_exclusive'
+                 WHEN record_count   > 0 THEN 'exclusive'
+                 ELSE                         'no_data'
+               END AS category,
+               COUNT(*) AS count
+             FROM (
+               SELECT
+                 ba.id,
+                 COUNT(bdn.id) AS record_count,
+                 SUM(
+                   CASE
+                     WHEN bdn.breastFeedMethod IS NULL
+                       OR bdn.breastFeedMethod IN ('null', '[]', '') THEN 0
+                     WHEN JSON_OVERLAPS(
+                       bdn.breastFeedMethod,
+                       '["3","4","5","6","7","8","9","10","11","12","13","14","15"]'
+                     ) THEN 1
+                     ELSE 0
+                   END
+                 ) AS non_excl_count
+               FROM babyAdmission ba
+               JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
+               LEFT JOIN babyDailyNutrition bdn ON bdn.babyAdmissionId = ba.id
+               WHERE ${where}
+               GROUP BY ba.id
+             ) t
+             GROUP BY category`,
+            params
+        );
+
+        const acc = { exclusive: 0, non_exclusive: 0, no_data: 0 };
+        for (const r of rows) {
+            if (acc[r.category] !== undefined) acc[r.category] = parseInt(r.count);
+        }
+        const totalAdmissions  = acc.exclusive + acc.non_exclusive + acc.no_data;
+        const totalWithData    = acc.exclusive + acc.non_exclusive;
+        const pctOf = (n, d) => d > 0 ? parseFloat(((n / d) * 100).toFixed(1)) : 0;
+
+        res.json({
+            categories: [
+                { key: 'exclusive',     label: 'Exclusive BF',     count: acc.exclusive,     pct: pctOf(acc.exclusive,     totalWithData) },
+                { key: 'non_exclusive', label: 'Non-Exclusive BF', count: acc.non_exclusive, pct: pctOf(acc.non_exclusive, totalWithData) },
+                { key: 'no_data',       label: 'No Data',          count: acc.no_data,       pct: pctOf(acc.no_data,       totalAdmissions) },
+            ],
+            totalAdmissions,
+            totalWithData,
+            exclusivePct: pctOf(acc.exclusive, totalWithData),
+        });
+    } catch (err) {
+        console.error('Error in getBreastfeeding:', err);
+        res.status(500).json({ error: 'Server error fetching breastfeeding data' });
     }
 };

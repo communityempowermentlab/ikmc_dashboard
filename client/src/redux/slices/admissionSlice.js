@@ -3,8 +3,8 @@ import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001/api';
 
-const buildParams = ({ facilityIds, months, loungeIds }) => {
-  const p = new URLSearchParams({ facilityIds, months });
+const buildParams = ({ facilityIds, startDate, endDate, loungeIds }) => {
+  const p = new URLSearchParams({ facilityIds, startDate, endDate });
   if (loungeIds) p.append('loungeIds', loungeIds);
   return p.toString();
 };
@@ -89,6 +89,30 @@ export const fetchSummaryTable = createAsyncThunk(
   }
 );
 
+export const fetchStayDuration = createAsyncThunk(
+  'admissions/fetchStayDuration',
+  async (args) => {
+    const response = await axios.get(`${API_URL}/v1/admissions/stayDuration?${buildParams(args)}`);
+    return response.data;
+  }
+);
+
+export const fetchWeightStability = createAsyncThunk(
+  'admissions/fetchWeightStability',
+  async (args) => {
+    const response = await axios.get(`${API_URL}/v1/admissions/weightStability?${buildParams(args)}`);
+    return response.data;
+  }
+);
+
+export const fetchBreastfeeding = createAsyncThunk(
+  'admissions/fetchBreastfeeding',
+  async (args) => {
+    const response = await axios.get(`${API_URL}/v1/admissions/breastfeeding?${buildParams(args)}`);
+    return response.data;
+  }
+);
+
 const admissionSlice = createSlice({
   name: 'admissions',
   initialState: {
@@ -102,7 +126,15 @@ const admissionSlice = createSlice({
     kmcDuration:  [],
     gender:       null,
     summaryTable: null,
-    loading: { kpi: false, trend: false, composition: false, birthWeight: false, discharge: false, earlyCare: false, transport: false, kmcDuration: false, gender: false, summary: false },
+    stayDuration:    null,
+    weightStability: null,
+    breastfeeding:   null,
+    loading: {
+      kpi: false, trend: false, composition: false, birthWeight: false,
+      discharge: false, earlyCare: false, transport: false, kmcDuration: false,
+      gender: false, summary: false, stayDuration: false,
+      weightStability: false, breastfeeding: false,
+    },
     error: null,
   },
   reducers: {},
@@ -146,7 +178,19 @@ const admissionSlice = createSlice({
 
       .addCase(fetchSummaryTable.pending,   (s) => { s.loading.summary = true;  s.error = null; })
       .addCase(fetchSummaryTable.fulfilled, (s, a) => { s.loading.summary = false; s.summaryTable = a.payload; })
-      .addCase(fetchSummaryTable.rejected,  (s, a) => { s.loading.summary = false; s.error = a.error.message; });
+      .addCase(fetchSummaryTable.rejected,  (s, a) => { s.loading.summary = false; s.error = a.error.message; })
+
+      .addCase(fetchStayDuration.pending,   (s) => { s.loading.stayDuration = true;  s.error = null; })
+      .addCase(fetchStayDuration.fulfilled, (s, a) => { s.loading.stayDuration = false; s.stayDuration = a.payload; })
+      .addCase(fetchStayDuration.rejected,  (s, a) => { s.loading.stayDuration = false; s.error = a.error.message; })
+
+      .addCase(fetchWeightStability.pending,   (s) => { s.loading.weightStability = true;  s.error = null; })
+      .addCase(fetchWeightStability.fulfilled, (s, a) => { s.loading.weightStability = false; s.weightStability = a.payload; })
+      .addCase(fetchWeightStability.rejected,  (s, a) => { s.loading.weightStability = false; s.error = a.error.message; })
+
+      .addCase(fetchBreastfeeding.pending,   (s) => { s.loading.breastfeeding = true;  s.error = null; })
+      .addCase(fetchBreastfeeding.fulfilled, (s, a) => { s.loading.breastfeeding = false; s.breastfeeding = a.payload; })
+      .addCase(fetchBreastfeeding.rejected,  (s, a) => { s.loading.breastfeeding = false; s.error = a.error.message; });
   },
 });
 

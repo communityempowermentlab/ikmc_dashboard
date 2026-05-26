@@ -13,7 +13,14 @@ import {
   fetchKmcDurationTrend,
   fetchGenderComposition,
   fetchSummaryTable,
+  fetchStayDuration,
+  fetchWeightStability,
+  fetchBreastfeeding,
 } from '../../redux/slices/admissionSlice';
+import {
+  fetchLoungePerformance,
+  fetchAttendanceMatrix,
+} from '../../redux/slices/nurseSlice';
 import './Dashboard.css';
 import './DashboardSkeleton.css';
 import DebugIcon from '../../components/common/DebugIcon';
@@ -21,6 +28,16 @@ import DebugModal from '../../components/common/DebugModal';
 
 const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const MONTH_FULL  = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+const STAY_COLORS   = ['#3b82f6', '#8b5cf6', '#14b8a6', '#f59e0b'];
+const WEIGHT_COLORS = { gain: '#22c55e', stable: '#3b82f6', loss: '#ef4444' };
+const BF_COLORS     = { exclusive: '#8b5cf6', non_exclusive: '#f59e0b' };
+
+function fmtDate(d) {
+  if (!d) return '';
+  const dt = new Date(d + 'T00:00:00');
+  return dt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+}
 
 // Semantic color mapping for discharge categories
 const DC_COLORS = {
@@ -33,14 +50,9 @@ const DC_COLORS = {
 };
 
 // ── helpers ──────────────────────────────────────────────────────────────────
-function parseMonthId(id) {
-  const [yr, mo] = id.split('-');
-  return { yr: parseInt(yr), mo: parseInt(mo) };
-}
-
 function formatMonthId(id) {
-  const { yr, mo } = parseMonthId(id);
-  return `${MONTH_SHORT[mo - 1]} ${yr}`;
+  const [yr, mo] = id.split('-');
+  return `${MONTH_SHORT[parseInt(mo) - 1]} ${yr}`;
 }
 
 // Center-text donut plugin factory (reused for both donut charts)
@@ -69,18 +81,28 @@ const Dashboard = () => {
   const dispatch = useDispatch();
 
   // Chart canvas refs
-  const admChartRef   = useRef(null);
-  const donutChartRef = useRef(null);
-  const kmcChartRef   = useRef(null);
+  const admChartRef      = useRef(null);
+  const donutChartRef    = useRef(null);
+  const kmcChartRef      = useRef(null);
+  const stayChartRef     = useRef(null);
+  const weightChartRef       = useRef(null);
+  const bfChartRef           = useRef(null);
+  const nurseTrendChartRef   = useRef(null);
+  const nurseMonthlyChartRef = useRef(null);
 
   // Chart instance refs
-  const admChartInstanceRef   = useRef(null);
-  const donutChartInstanceRef = useRef(null);
-  const kmcChartInstanceRef   = useRef(null);
+  const admChartInstanceRef          = useRef(null);
+  const donutChartInstanceRef        = useRef(null);
+  const kmcChartInstanceRef          = useRef(null);
+  const stayChartInstanceRef         = useRef(null);
+  const weightChartInstanceRef       = useRef(null);
+  const bfChartInstanceRef           = useRef(null);
+  const nurseTrendChartInstanceRef   = useRef(null);
+  const nurseMonthlyChartInstanceRef = useRef(null);
 
-  // Filters — all multi-select arrays now
+  // Filters
   const filtersState = useSelector(s => s.filters);
-  const { selectedFacilities, selectedLounges, selectedMonths } = filtersState;
+  const { selectedFacilities, selectedLounges, startDate, endDate, visibility } = filtersState;
 
   // Admission data
   const {
@@ -94,8 +116,17 @@ const Dashboard = () => {
     kmcDuration:  admKmcDuration,
     gender:       admGender,
     summaryTable: admSummary,
-    loading:      admLoading,
+    stayDuration:    admStayDuration,
+    weightStability: admWeightStability,
+    breastfeeding:   admBreastfeeding,
+    loading:         admLoading,
   } = useSelector(s => s.admissions);
+
+  const {
+    loungePerformance: nurseLounge,
+    attendanceMatrix:  nurseMatrix,
+    loading:           nurseLoading,
+  } = useSelector(s => s.nurses);
 
   const [isDashboardLoading, setIsDashboardLoading] = useState(true);
   const [insightFilter,    setInsightFilter]    = useState(null);  // 'critical' | 'warning' | 'positive' | null
@@ -105,57 +136,48 @@ const Dashboard = () => {
   // Debug Modal State
   const [activeDebugInfo, setActiveDebugInfo] = useState(null);
 
-  // ── Section label (dynamic month range) ──────────────────────────────────
+  // ── Section label (date range) ────────────────────────────────────────────
   const sectionLabel = useMemo(() => {
-    if (!selectedMonths.length) return 'Loading…';
-    const sorted = [...selectedMonths].sort();
-    if (sorted.length === 1) return formatMonthId(sorted[0]);
-    const first = formatMonthId(sorted[0]);
-    const last  = formatMonthId(sorted[sorted.length - 1]);
-    // Show range when contiguous, count otherwise
-    return `${first} – ${last}`;
-  }, [selectedMonths]);
+    if (!startDate || !endDate) return 'Loading…';
+    return `${fmtDate(startDate)} – ${fmtDate(endDate)}`;
+  }, [startDate, endDate]);
 
   // ── Previous period label for KPI trend text ──────────────────────────────
   const prevPeriodLabel = useMemo(() => {
-    if (!admKpi?.previousPeriods?.length) return '';
-    const pp = admKpi.previousPeriods;
-    if (pp.length === 1) return formatMonthId(pp[0]);
-    const first = formatMonthId([...pp].sort()[0]);
-    const last  = formatMonthId([...pp].sort().pop());
-    return `${first} – ${last}`;
+    if (!admKpi?.previousPeriod) return '';
+    const { startDate: ps, endDate: pe } = admKpi.previousPeriod;
+    return `${fmtDate(ps)} – ${fmtDate(pe)}`;
   }, [admKpi]);
 
   // Stable string keys — re-fire effects only when content actually changes
-  const selectedMonthsKey     = [...selectedMonths].sort().join(',');
   const selectedFacilitiesKey = [...selectedFacilities].sort().join(',');
   const selectedLoungesKey    = [...selectedLounges].sort().join(',');
 
-  // ── Trigger skeleton when lounge selection becomes ready ─────────────────
+  // ── Trigger skeleton when location or date range changes ─────────────────
   useEffect(() => {
-    if (selectedLounges.length) {
+    if (selectedLounges.length && startDate && endDate) {
       setIsDashboardLoading(true);
       const timer = setTimeout(() => setIsDashboardLoading(false), 1200);
       return () => clearTimeout(timer);
     } else {
       setIsDashboardLoading(true);
     }
-  }, [selectedLoungesKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedLoungesKey, startDate, endDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset insight filter + mobile index whenever dashboard filters change
   useEffect(() => {
     setInsightFilter(null);
     setMobileInsightIdx(0);
     setMobileVisible(true);
-  }, [selectedFacilitiesKey, selectedLoungesKey, selectedMonthsKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedFacilitiesKey, selectedLoungesKey, startDate, endDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset mobile index when filter badge changes
   useEffect(() => { setMobileInsightIdx(0); setMobileVisible(true); }, [insightFilter]);
 
   // ── Fetch all admission data when filters change ──────────────────────────
   useEffect(() => {
-    if (!selectedFacilities.length || !selectedMonths.length) return;
-    const params = { facilityIds: selectedFacilitiesKey, months: selectedMonthsKey };
+    if (!selectedFacilities.length || !startDate || !endDate) return;
+    const params = { facilityIds: selectedFacilitiesKey, startDate, endDate };
     if (selectedLounges.length) params.loungeIds = selectedLoungesKey;
     dispatch(fetchAdmissionKpi(params));
     dispatch(fetchAdmissionTrend(params));
@@ -167,7 +189,12 @@ const Dashboard = () => {
     dispatch(fetchKmcDurationTrend(params));
     dispatch(fetchGenderComposition(params));
     dispatch(fetchSummaryTable(params));
-  }, [selectedFacilitiesKey, selectedLoungesKey, selectedMonthsKey, dispatch]); // eslint-disable-line react-hooks/exhaustive-deps
+    dispatch(fetchStayDuration(params));
+    dispatch(fetchWeightStability(params));
+    dispatch(fetchBreastfeeding(params));
+    dispatch(fetchLoungePerformance(params));
+    dispatch(fetchAttendanceMatrix(params));
+  }, [selectedFacilitiesKey, selectedLoungesKey, startDate, endDate, dispatch]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── KMC Duration trend chart (dynamic) ───────────────────────────────────
   useEffect(() => {
@@ -318,6 +345,220 @@ const Dashboard = () => {
     });
     return () => { if (donutChartInstanceRef.current) { donutChartInstanceRef.current.destroy(); donutChartInstanceRef.current = null; } };
   }, [isDashboardLoading, admComp]);
+
+  // ── Stay Duration bar chart ───────────────────────────────────────────────
+  useEffect(() => {
+    if (stayChartInstanceRef.current) { stayChartInstanceRef.current.destroy(); stayChartInstanceRef.current = null; }
+    if (isDashboardLoading || !stayChartRef.current || !admStayDuration?.categories?.length) return;
+
+    const cats   = admStayDuration.categories;
+    const labels = cats.map(c => c.label);
+    const counts = cats.map(c => c.count);
+    const gridColor = 'rgba(0,0,0,0.06)', tickColor = '#9ca3af';
+
+    stayChartInstanceRef.current = new Chart(stayChartRef.current, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Babies',
+          data: counts,
+          backgroundColor: STAY_COLORS,
+          borderRadius: 6,
+          borderWidth: 0,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        layout: { padding: { top: 16 } },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: (item) => {
+                const cat = cats[item.dataIndex];
+                return ` ${cat.count.toLocaleString()} babies (${cat.pct}%)`;
+              }
+            }
+          }
+        },
+        scales: {
+          x: { ticks: { color: tickColor }, grid: { display: false }, border: { display: false } },
+          y: { ticks: { color: tickColor }, grid: { color: gridColor }, border: { display: false }, min: 0 }
+        }
+      }
+    });
+
+    return () => { if (stayChartInstanceRef.current) { stayChartInstanceRef.current.destroy(); stayChartInstanceRef.current = null; } };
+  }, [isDashboardLoading, admStayDuration]);
+
+  // ── Weight Stability donut chart ─────────────────────────────────────────
+  useEffect(() => {
+    if (weightChartInstanceRef.current) { weightChartInstanceRef.current.destroy(); weightChartInstanceRef.current = null; }
+    if (isDashboardLoading || !weightChartRef.current || !admWeightStability?.totalWithData) return;
+
+    const cats   = admWeightStability.categories.filter(c => c.count > 0 || c.key !== 'stable');
+    const labels = cats.map(c => c.label);
+    const counts = cats.map(c => c.count);
+    const colors = cats.map(c => WEIGHT_COLORS[c.key] || '#9ca3af');
+    const total  = admWeightStability.totalWithData;
+
+    const centerPlugin = makeCenterTextPlugin('weightCenter', () => ({
+      label: 'w/ data', value: total.toLocaleString()
+    }));
+
+    weightChartInstanceRef.current = new Chart(weightChartRef.current, {
+      type: 'doughnut', plugins: [centerPlugin],
+      data: { labels, datasets: [{ data: counts, backgroundColor: colors, hoverOffset: 8, borderWidth: 0 }] },
+      options: {
+        responsive: true, maintainAspectRatio: false, cutout: '68%',
+        animation: { animateRotate: true, duration: 700, easing: 'easeInOutQuart' },
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${ctx.parsed.toLocaleString()} (${cats[ctx.dataIndex].pct}%)` } }
+        }
+      }
+    });
+
+    return () => { if (weightChartInstanceRef.current) { weightChartInstanceRef.current.destroy(); weightChartInstanceRef.current = null; } };
+  }, [isDashboardLoading, admWeightStability]);
+
+  // ── Breastfeeding donut chart ─────────────────────────────────────────────
+  useEffect(() => {
+    if (bfChartInstanceRef.current) { bfChartInstanceRef.current.destroy(); bfChartInstanceRef.current = null; }
+    if (isDashboardLoading || !bfChartRef.current || !admBreastfeeding?.totalWithData) return;
+
+    const excl    = admBreastfeeding.categories.find(c => c.key === 'exclusive');
+    const nonExcl = admBreastfeeding.categories.find(c => c.key === 'non_exclusive');
+    if (!excl || !nonExcl) return;
+
+    const centerPlugin = makeCenterTextPlugin('bfCenter', () => ({
+      label: 'w/ data', value: admBreastfeeding.totalWithData.toLocaleString()
+    }));
+
+    bfChartInstanceRef.current = new Chart(bfChartRef.current, {
+      type: 'doughnut', plugins: [centerPlugin],
+      data: {
+        labels: [excl.label, nonExcl.label],
+        datasets: [{ data: [excl.count, nonExcl.count], backgroundColor: [BF_COLORS.exclusive, BF_COLORS.non_exclusive], hoverOffset: 8, borderWidth: 0 }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, cutout: '68%',
+        animation: { animateRotate: true, duration: 700, easing: 'easeInOutQuart' },
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: ctx => ` ${ctx.label}: ${ctx.parsed.toLocaleString()} (${[excl, nonExcl][ctx.dataIndex].pct}%)` } }
+        }
+      }
+    });
+
+    return () => { if (bfChartInstanceRef.current) { bfChartInstanceRef.current.destroy(); bfChartInstanceRef.current = null; } };
+  }, [isDashboardLoading, admBreastfeeding]);
+
+  // ── Nurse daily trend bar chart ───────────────────────────────────────────
+  useEffect(() => {
+    if (nurseTrendChartInstanceRef.current) { nurseTrendChartInstanceRef.current.destroy(); nurseTrendChartInstanceRef.current = null; }
+    if (isDashboardLoading || !nurseTrendChartRef.current || !nurseLounge?.dailyTrend?.length) return;
+
+    const trend  = nurseLounge.dailyTrend;
+    const labels = trend.map(d => {
+      const dt = new Date(d.date + 'T12:00:00Z');
+      return `${dt.getUTCDate()} ${MONTH_SHORT[dt.getUTCMonth()]}`;
+    });
+    const counts  = trend.map(d => d.nurseCount);
+    const gridColor = 'rgba(0,0,0,0.06)', tickColor = '#9ca3af';
+    const maxVal = Math.max(...counts, 1);
+
+    nurseTrendChartInstanceRef.current = new Chart(nurseTrendChartRef.current, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Nurses checked in',
+          data: counts,
+          backgroundColor: counts.map(c => c > 0 ? 'rgba(59,130,246,0.75)' : 'rgba(239,68,68,0.65)'),
+          borderRadius: 4,
+          borderWidth: 0,
+        }]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        layout: { padding: { top: 12 } },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              title: items => `${trend[items[0].dataIndex].date}`,
+              label: item => ` ${item.parsed.y} nurse${item.parsed.y !== 1 ? 's' : ''} checked in`,
+            }
+          }
+        },
+        scales: {
+          x: { ticks: { color: tickColor, maxTicksLimit: 30, font: { size: 10 } }, grid: { display: false }, border: { display: false } },
+          y: { ticks: { color: tickColor, stepSize: 1 }, grid: { color: gridColor }, border: { display: false }, min: 0, suggestedMax: maxVal + 1 }
+        }
+      }
+    });
+
+    return () => { if (nurseTrendChartInstanceRef.current) { nurseTrendChartInstanceRef.current.destroy(); nurseTrendChartInstanceRef.current = null; } };
+  }, [isDashboardLoading, nurseLounge]);
+
+  // ── Nurse monthly trend chart ─────────────────────────────────────────────
+  useEffect(() => {
+    if (nurseMonthlyChartInstanceRef.current) { nurseMonthlyChartInstanceRef.current.destroy(); nurseMonthlyChartInstanceRef.current = null; }
+    if (isDashboardLoading || !nurseMonthlyChartRef.current || !nurseLounge?.monthlyTrend?.length) return;
+
+    const trend  = nurseLounge.monthlyTrend;
+    const labels = trend.map(m => `${MONTH_SHORT[m.month - 1]} '${String(m.year).slice(2)}`);
+    const gridColor = 'rgba(0,0,0,0.06)', tickColor = '#9ca3af';
+
+    nurseMonthlyChartInstanceRef.current = new Chart(nurseMonthlyChartRef.current, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [
+          {
+            label: 'Checked-In Days',
+            data: trend.map(m => m.checkinDays),
+            backgroundColor: '#3b82f6',
+            borderRadius: 4,
+            borderWidth: 0,
+          },
+          {
+            label: 'Missed Days',
+            data: trend.map(m => m.missedDays),
+            backgroundColor: '#fca5a5',
+            borderRadius: 4,
+            borderWidth: 0,
+          }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        layout: { padding: { top: 12 } },
+        plugins: {
+          legend: { display: true, position: 'top', labels: { boxWidth: 12, font: { size: 11 }, color: '#6b7280' } },
+          tooltip: {
+            mode: 'index', intersect: false,
+            callbacks: {
+              title: items => labels[items[0].dataIndex],
+              label: item => ` ${item.dataset.label}: ${item.parsed.y} days`,
+              afterBody: items => {
+                const m = trend[items[0].dataIndex];
+                return [`Attendance: ${m.pct}% (${m.checkinDays}/${m.totalDays} days)`];
+              }
+            }
+          }
+        },
+        scales: {
+          x: { stacked: true, ticks: { color: tickColor }, grid: { display: false }, border: { display: false } },
+          y: { stacked: true, ticks: { color: tickColor, stepSize: 5 }, grid: { color: gridColor }, border: { display: false }, min: 0 }
+        }
+      }
+    });
+
+    return () => { if (nurseMonthlyChartInstanceRef.current) { nurseMonthlyChartInstanceRef.current.destroy(); nurseMonthlyChartInstanceRef.current = null; } };
+  }, [isDashboardLoading, nurseLounge]);
 
   // Birth weight and discharge visualizations are pure CSS/JSX — no Chart.js needed
 
@@ -660,7 +901,7 @@ const Dashboard = () => {
         ) : (
           <>
             {/* KPI CARDS */}
-            <div>
+            {visibility.kpiCards !== false && <div>
               <div className="section-label">Executive summary — {sectionLabel}</div>
               <div className="kpi-grid">
 
@@ -832,11 +1073,11 @@ const Dashboard = () => {
                   );
                 })()}
               </div>
-            </div>
+            </div>}
 
             {/* ROW 2: Admission trend + Inborn/Outborn */}
-            <div className="row-2col">
-              <div className="card">
+            {(visibility.admissionTrend !== false || visibility.inbornOutborn !== false) && <div className="row-2col">
+              {visibility.admissionTrend !== false && <div className="card">
                 <div className="card-title">
                   Admission trend — monthly ({sectionLabel})
                   <DebugIcon onClick={setActiveDebugInfo} info={{
@@ -852,9 +1093,9 @@ const Dashboard = () => {
                   {admLoading.trend && <div className="adm-chart-overlay">Loading trend data…</div>}
                   {!admLoading.trend && admTrend.length === 0 && <div className="adm-chart-overlay">No admission data available</div>}
                 </div>
-              </div>
+              </div>}
 
-              <div className="card">
+              {visibility.inbornOutborn !== false && <div className="card">
                 <div className="card-title">
                   Inborn vs Outborn composition
                   <DebugIcon onClick={setActiveDebugInfo} info={{
@@ -888,13 +1129,13 @@ const Dashboard = () => {
                     </div>
                   </div>
                 </div>
-              </div>
-            </div>
+              </div>}
+            </div>}
 
             {/* ROW 3: Birth weight (dynamic donut) + Clinical compliance + KMC trend */}
-            <div className="row-3col">
+            {(visibility.birthWeight !== false || visibility.gender !== false || visibility.kmcDuration !== false) && <div className="row-3col">
               {/* Birth Weight Distribution — DYNAMIC (CSS visualization) */}
-              <div className="card">
+              {visibility.birthWeight !== false && <div className="card">
                 <div className="card-title">
                   Birth weight distribution
                   <DebugIcon onClick={setActiveDebugInfo} info={{
@@ -939,10 +1180,10 @@ const Dashboard = () => {
                     </div>
                   </div>
                 )}
-              </div>
+              </div>}
 
               {/* Gender Composition — DYNAMIC */}
-              <div className="card">
+              {visibility.gender !== false && <div className="card">
                 <div className="card-title">
                   Gender composition
                   <DebugIcon onClick={setActiveDebugInfo} info={{
@@ -998,10 +1239,10 @@ const Dashboard = () => {
                     </div>
                   );
                 })()}
-              </div>
+              </div>}
 
               {/* KMC Duration Trend — DYNAMIC */}
-              <div className="card">
+              {visibility.kmcDuration !== false && <div className="card">
                 <div className="card-title">
                   Avg KMC duration / baby / day
                   <DebugIcon onClick={setActiveDebugInfo} info={{
@@ -1036,11 +1277,11 @@ const Dashboard = () => {
                     </>
                   );
                 })()}
-              </div>
-            </div>
+              </div>}
+            </div>}
 
             {/* ROW 4: Early Care Indicators — KMC within 2h + BF within 1h */}
-            <div className="row-2col-even">
+            {visibility.earlyCare !== false && <div className="row-2col-even">
               {/* ── KMC within 2 hours ── */}
               {[
                 { key: 'kmc', title: 'KMC Initiated within 2 Hours',         icon: '🫀', debug: { title: 'Early Care: KMC', sourceTable: 'babyAdmission', formulas: ['KMC < 2h % = (Yes / Total) * 100'] } },
@@ -1136,10 +1377,10 @@ const Dashboard = () => {
                   </div>
                 );
               })}
-            </div>
+            </div>}
 
             {/* ROW 5: Transportation in KMC Position — DYNAMIC */}
-            <div>
+            {visibility.transport !== false && <div>
               <div className="section-label">Transportation in KMC Position — {sectionLabel}</div>
               <div className="card tp-card">
                 <div className="card-title">
@@ -1206,10 +1447,10 @@ const Dashboard = () => {
                   );
                 })()}
               </div>
-            </div>
+            </div>}
 
             {/* ROW 6: Discharge outcomes — full width */}
-            <div className="card">
+            {visibility.discharge !== false && <div className="card">
               <div className="card-title">
                 Discharge outcomes breakdown
                 <DebugIcon onClick={setActiveDebugInfo} info={{
@@ -1273,10 +1514,10 @@ const Dashboard = () => {
                   </div>
                 );
               })()}
-            </div>
+            </div>}
 
             {/* ROW 7: Executive Summary Analytics Table */}
-            <div className="card est-card">
+            {visibility.executiveSummary !== false && <div className="card est-card">
               <div className="est-header">
                 <div>
                   <div className="card-title" style={{marginBottom:'2px'}}>
@@ -1529,7 +1770,403 @@ const Dashboard = () => {
                   </div>
                 );
               })()}
-            </div>
+            </div>}
+
+            {/* ROW 8: Stay Duration Analytics */}
+            {visibility.stayDuration !== false && <div>
+              <div className="section-label">Stay Duration Analytics — {sectionLabel}</div>
+              <div className="stay-kpi-grid">
+                {admLoading.stayDuration
+                  ? [0,1,2,3].map(i => <div key={i} className="stay-kpi-card stay-kpi-loading" />)
+                  : admStayDuration?.categories?.map((cat, i) => (
+                    <div key={cat.key} className="stay-kpi-card" style={{'--stay-color': STAY_COLORS[i]}}>
+                      <div className="stay-cat-label">{cat.label}</div>
+                      <div className="stay-cat-count">{cat.count.toLocaleString()}</div>
+                      <div className="stay-cat-pct" style={{color: STAY_COLORS[i]}}>{cat.pct}%</div>
+                      <div className="stay-cat-bar-track">
+                        <div className="stay-cat-bar-fill" style={{width: cat.pct + '%', background: STAY_COLORS[i]}} />
+                      </div>
+                      <div className="stay-cat-sub">
+                        of {admStayDuration.total.toLocaleString()} total babies
+                      </div>
+                    </div>
+                  ))
+                }
+              </div>
+              <div className="card" style={{marginTop:'16px'}}>
+                <div className="card-title">
+                  Stay Duration Distribution
+                  <DebugIcon onClick={setActiveDebugInfo} info={{
+                    title: 'Stay Duration Distribution',
+                    sourceTable: 'babyAdmission',
+                    appliedLogic: 'Duration = TIMESTAMPDIFF(HOUR, admissionDateTime, COALESCE(dateOfDischarge, NOW())). Active admissions use NOW() as proxy.',
+                    formulas: ['Stay Hours = TIMESTAMPDIFF(HOUR, admissionDateTime, COALESCE(dateOfDischarge, NOW()))'],
+                    categories: ['0–24h', '24–48h', '48–72h', '>72h']
+                  }} />
+                </div>
+                {admLoading.stayDuration && (
+                  <div className="adm-chart-overlay" style={{position:'relative',height:'200px'}}>Loading stay data…</div>
+                )}
+                {!admLoading.stayDuration && !admStayDuration?.total && (
+                  <div className="adm-chart-overlay" style={{position:'relative',height:'200px'}}>No stay duration data for selected period</div>
+                )}
+                {!admLoading.stayDuration && admStayDuration?.total > 0 && (
+                  <div className="chart-wrap chart-fill" style={{minHeight:'200px'}}>
+                    <canvas ref={stayChartRef} role="img" aria-label="Stay duration distribution chart" />
+                  </div>
+                )}
+              </div>
+            </div>}
+
+            {/* ROW 9: Weight Stability Analytics */}
+            {visibility.weightStability !== false && (
+              <div>
+                <div className="section-label">Weight Stability Analytics — {sectionLabel}</div>
+                <div className="row-2col-even">
+                  {/* Left: KPI tiles */}
+                  <div className="card">
+                    <div className="card-title">
+                      Weight Gain / Loss Distribution
+                      <DebugIcon onClick={setActiveDebugInfo} info={{
+                        title: 'Weight Stability Analytics',
+                        sourceTable: 'babyDailyWeight',
+                        appliedLogic: 'Compares birth weight (weightType=1) vs discharge weight (weightType=4) per admission. Gain = discharge > birth, Loss = discharge < birth, Stable = equal.',
+                        formulas: ['Weight Diff = discharge_weight − birth_weight'],
+                        note: 'Only babies with both birth and discharge weights recorded are included. Discharge weight data may be sparse.'
+                      }} />
+                    </div>
+                    {admLoading.weightStability ? (
+                      <div className="adm-chart-overlay" style={{position:'relative',height:'180px'}}>Loading weight data…</div>
+                    ) : !admWeightStability || admWeightStability.totalWithData === 0 ? (
+                      <div className="adm-chart-overlay" style={{position:'relative',height:'180px'}}>
+                        {admWeightStability ? `No discharge weight data available (0 of ${admWeightStability.totalAdmissions.toLocaleString()} babies have discharge weights recorded)` : 'No data available'}
+                      </div>
+                    ) : (() => {
+                      const cats = admWeightStability.categories;
+                      return (
+                        <div className="ws-section">
+                          <div className="ws-coverage">
+                            <span className="ws-coverage-num">{admWeightStability.totalWithData.toLocaleString()}</span>
+                            <span className="ws-coverage-of"> of {admWeightStability.totalAdmissions.toLocaleString()} babies</span>
+                            <span className="ws-coverage-label"> have both birth &amp; discharge weights</span>
+                          </div>
+                          <div className="ws-tiles">
+                            {cats.map(c => (
+                              <div key={c.key} className="ws-tile" style={{'--ws-color': WEIGHT_COLORS[c.key]}}>
+                                <div className="ws-tile-icon">
+                                  {c.key === 'gain' ? '↑' : c.key === 'loss' ? '↓' : '→'}
+                                </div>
+                                <div className="ws-tile-label">{c.label}</div>
+                                <div className="ws-tile-count">{c.count.toLocaleString()}</div>
+                                <div className="ws-tile-pct" style={{color: WEIGHT_COLORS[c.key]}}>{c.pct}%</div>
+                                <div className="ws-tile-track">
+                                  <div className="ws-tile-fill" style={{width: c.pct + '%', background: WEIGHT_COLORS[c.key]}} />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  {/* Right: Donut chart */}
+                  <div className="card">
+                    <div className="card-title">Weight Change Overview</div>
+                    {admLoading.weightStability ? (
+                      <div className="adm-chart-overlay" style={{position:'relative',height:'200px'}}>Loading…</div>
+                    ) : !admWeightStability?.totalWithData ? (
+                      <div className="adm-chart-overlay" style={{position:'relative',height:'200px'}}>Insufficient discharge weight data</div>
+                    ) : (
+                      <>
+                        <div className="chart-wrap" style={{height:'190px',position:'relative'}}>
+                          <canvas ref={weightChartRef} role="img" aria-label="Weight stability donut chart" />
+                        </div>
+                        <div className="comp-stats">
+                          {admWeightStability.categories.map(c => (
+                            <div key={c.key} className="comp-item" style={{minWidth:0}}>
+                              <span className="comp-dot" style={{background: WEIGHT_COLORS[c.key]}} />
+                              <div className="comp-info">
+                                <div className="comp-label">{c.label}</div>
+                                <div className="comp-count">{c.count.toLocaleString()}</div>
+                                <div className="comp-pct" style={{color: WEIGHT_COLORS[c.key]}}>{c.pct}%</div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ROW 10: Breastfeeding Analytics */}
+            {visibility.breastfeeding !== false && (
+              <div>
+                <div className="section-label">Breastfeeding Analytics — {sectionLabel}</div>
+                <div className="row-2col-even">
+                  {/* Left: KPI tiles */}
+                  <div className="card">
+                    <div className="card-title">
+                      Exclusive vs Non-Exclusive Breastfeeding
+                      <DebugIcon onClick={setActiveDebugInfo} info={{
+                        title: 'Breastfeeding Analytics',
+                        sourceTable: 'babyDailyNutrition',
+                        appliedLogic: 'Each baby is classified based on all their nutrition records. Exclusive = only breastfeed methods 1 (Breastfeed) or 2 (Expressed BM) found across all records. Non-Exclusive = any other method code present.',
+                        formulas: ['Exclusive % = (Exclusive / (Exclusive + Non-Exclusive)) × 100'],
+                        note: 'breastFeedMethod stored as JSON array. Babies with no nutrition records are counted separately as No Data.'
+                      }} />
+                    </div>
+                    {admLoading.breastfeeding ? (
+                      <div className="adm-chart-overlay" style={{position:'relative',height:'180px'}}>Loading breastfeeding data…</div>
+                    ) : !admBreastfeeding || admBreastfeeding.totalWithData === 0 ? (
+                      <div className="adm-chart-overlay" style={{position:'relative',height:'180px'}}>No breastfeeding data available</div>
+                    ) : (() => {
+                      const excl     = admBreastfeeding.categories.find(c => c.key === 'exclusive');
+                      const nonExcl  = admBreastfeeding.categories.find(c => c.key === 'non_exclusive');
+                      const noData   = admBreastfeeding.categories.find(c => c.key === 'no_data');
+                      return (
+                        <div className="bf-section">
+                          <div className="bf-summary">
+                            <div className="bf-excl-badge" style={{color: BF_COLORS.exclusive}}>
+                              <span className="bf-excl-pct">{admBreastfeeding.exclusivePct}%</span>
+                              <span className="bf-excl-label">Exclusive BF rate</span>
+                            </div>
+                            <div className="bf-totals">
+                              <span className="bf-total-num">{admBreastfeeding.totalWithData.toLocaleString()}</span>
+                              <span className="bf-total-label"> babies with feeding data</span>
+                            </div>
+                          </div>
+                          <div className="bf-tiles">
+                            {[excl, nonExcl].filter(Boolean).map(c => (
+                              <div key={c.key} className="bf-tile" style={{'--bf-color': BF_COLORS[c.key]}}>
+                                <div className="bf-tile-label">{c.label}</div>
+                                <div className="bf-tile-count">{c.count.toLocaleString()}</div>
+                                <div className="bf-tile-pct" style={{color: BF_COLORS[c.key]}}>{c.pct}%</div>
+                                <div className="bf-tile-track">
+                                  <div className="bf-tile-fill" style={{width: c.pct + '%', background: BF_COLORS[c.key]}} />
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                          {noData && noData.count > 0 && (
+                            <div className="bf-nodata-note">
+                              + {noData.count.toLocaleString()} babies have no nutrition records
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  {/* Right: Donut chart */}
+                  <div className="card">
+                    <div className="card-title">Breastfeeding Method Distribution</div>
+                    {admLoading.breastfeeding ? (
+                      <div className="adm-chart-overlay" style={{position:'relative',height:'200px'}}>Loading…</div>
+                    ) : !admBreastfeeding?.totalWithData ? (
+                      <div className="adm-chart-overlay" style={{position:'relative',height:'200px'}}>No breastfeeding data</div>
+                    ) : (
+                      <>
+                        <div className="chart-wrap" style={{height:'190px',position:'relative'}}>
+                          <canvas ref={bfChartRef} role="img" aria-label="Breastfeeding method donut chart" />
+                        </div>
+                        <div className="comp-stats">
+                          {admBreastfeeding.categories.filter(c => c.key !== 'no_data').map(c => (
+                            <div key={c.key} className="comp-item" style={{minWidth:0}}>
+                              <span className="comp-dot" style={{background: BF_COLORS[c.key]}} />
+                              <div className="comp-info">
+                                <div className="comp-label">{c.label}</div>
+                                <div className="comp-count">{c.count.toLocaleString()}</div>
+                                <div className="comp-pct" style={{color: BF_COLORS[c.key]}}>{c.pct}%</div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ROW 11: Nurse Lounge Performance Analytics */}
+            {visibility.nurseLounge !== false && (
+              <div>
+                <div className="section-label">Nurse Lounge Performance — {sectionLabel}</div>
+
+                {/* KPI Cards */}
+                {nurseLoading.loungePerformance ? (
+                  <div className="nurse-kpi-grid">
+                    {[0,1,2,3].map(i => <div key={i} className="nurse-kpi-card nurse-kpi-loading" />)}
+                  </div>
+                ) : nurseLounge?.kpi ? (() => {
+                  const { totalDays, checkinDays, missedDays, pct } = nurseLounge.kpi;
+                  const pctColor = pct >= 90 ? '#22c55e' : pct >= 70 ? '#f59e0b' : '#ef4444';
+                  return (
+                    <div className="nurse-kpi-grid">
+                      <div className="nurse-kpi-card" style={{'--nk-color': pctColor}}>
+                        <div className="nurse-kpi-label">Attendance Rate</div>
+                        <div className="nurse-kpi-val" style={{color: pctColor}}>{pct}<span className="nurse-kpi-unit">%</span></div>
+                        <div className="nurse-kpi-sub">Lounge operational coverage</div>
+                      </div>
+                      <div className="nurse-kpi-card" style={{'--nk-color': '#3b82f6'}}>
+                        <div className="nurse-kpi-label">Total Days in Range</div>
+                        <div className="nurse-kpi-val">{totalDays}</div>
+                        <div className="nurse-kpi-sub">{sectionLabel}</div>
+                      </div>
+                      <div className="nurse-kpi-card" style={{'--nk-color': '#22c55e'}}>
+                        <div className="nurse-kpi-label">Check-In Days</div>
+                        <div className="nurse-kpi-val" style={{color:'#22c55e'}}>{checkinDays}</div>
+                        <div className="nurse-kpi-sub">≥1 nurse checked in</div>
+                      </div>
+                      <div className="nurse-kpi-card" style={{'--nk-color': missedDays > 0 ? '#ef4444' : '#9ca3af'}}>
+                        <div className="nurse-kpi-label">Missed Days</div>
+                        <div className="nurse-kpi-val" style={{color: missedDays > 0 ? '#ef4444' : '#9ca3af'}}>{missedDays}</div>
+                        <div className="nurse-kpi-sub">No check-in recorded</div>
+                      </div>
+                    </div>
+                  );
+                })() : null}
+
+                {/* Charts */}
+                <div className="row-2col" style={{marginTop:'12px'}}>
+                  <div className="card">
+                    <div className="card-title">
+                      Daily Attendance Trend
+                      <DebugIcon onClick={setActiveDebugInfo} info={{
+                        title: 'Nurse Daily Attendance',
+                        sourceTable: 'nurseDutyChange',
+                        appliedLogic: 'A day is counted as "Operational" if at least one nurse (any nurseId) has a record in nurseDutyChange for the selected lounge on that date. Each bar = number of nurses who checked in.',
+                        formulas: ['Attendance % = (Check-In Days / Total Days) × 100'],
+                      }} />
+                    </div>
+                    {nurseLoading.loungePerformance ? (
+                      <div className="adm-chart-overlay" style={{position:'relative',height:'220px'}}>Loading nurse data…</div>
+                    ) : !nurseLounge?.dailyTrend?.length ? (
+                      <div className="adm-chart-overlay" style={{position:'relative',height:'220px'}}>No check-in data for selected period</div>
+                    ) : (
+                      <div className="chart-wrap chart-fill" style={{minHeight:'220px'}}>
+                        <canvas ref={nurseTrendChartRef} role="img" aria-label="Nurse daily check-in trend" />
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="card">
+                    <div className="card-title">Monthly Attendance Summary</div>
+                    {nurseLoading.loungePerformance ? (
+                      <div className="adm-chart-overlay" style={{position:'relative',height:'220px'}}>Loading…</div>
+                    ) : !nurseLounge?.monthlyTrend?.length ? (
+                      <div className="adm-chart-overlay" style={{position:'relative',height:'220px'}}>No data available</div>
+                    ) : (
+                      <>
+                        <div className="chart-wrap chart-fill" style={{minHeight:'190px'}}>
+                          <canvas ref={nurseMonthlyChartRef} role="img" aria-label="Nurse monthly attendance chart" />
+                        </div>
+                        <div className="nurse-monthly-legend">
+                          {nurseLounge.monthlyTrend.map(m => {
+                            const color = m.pct >= 90 ? '#22c55e' : m.pct >= 70 ? '#f59e0b' : '#ef4444';
+                            return (
+                              <div key={`${m.year}-${m.month}`} className="nurse-mo-pill" style={{borderColor: color}}>
+                                <span className="nurse-mo-name">{MONTH_SHORT[m.month - 1]} '{String(m.year).slice(2)}</span>
+                                <span className="nurse-mo-pct" style={{color}}>{m.pct}%</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ROW 12: Nurse-wise Attendance Matrix */}
+            {visibility.nurseMatrix !== false && (
+              <div>
+                <div className="section-label">Nurse-wise Attendance Matrix — {sectionLabel}</div>
+                <div className="card">
+                  <div className="card-title">
+                    Individual Nurse Attendance Tracking
+                    <DebugIcon onClick={setActiveDebugInfo} info={{
+                      title: 'Nurse Attendance Matrix',
+                      sourceTable: 'nurseDutyChange, staffMaster',
+                      appliedLogic: 'Each cell shows whether a nurse (nurseId → staffMaster.name) had at least one check-in on that date for the selected lounge. Multiple check-ins on the same day count as one.',
+                      formulas: ['Present % = (Present Days / Total Days in Range) × 100'],
+                    }} />
+                    {nurseMatrix?.nurses?.length > 0 && (
+                      <span style={{marginLeft:'8px', fontSize:'11px', fontWeight:500, color:'var(--text-muted)'}}>
+                        {nurseMatrix.nurses.length} nurse{nurseMatrix.nurses.length !== 1 ? 's' : ''} · {nurseMatrix.totalDays} days
+                      </span>
+                    )}
+                  </div>
+
+                  {nurseLoading.attendanceMatrix && (
+                    <div className="adm-chart-overlay" style={{position:'relative',height:'180px'}}>Loading attendance matrix…</div>
+                  )}
+                  {!nurseLoading.attendanceMatrix && (!nurseMatrix?.nurses?.length) && (
+                    <div className="adm-chart-overlay" style={{position:'relative',height:'180px'}}>No nurse check-in data for selected period</div>
+                  )}
+                  {!nurseLoading.attendanceMatrix && nurseMatrix?.nurses?.length > 0 && (() => {
+                    const { dates, nurses, totalDays: matrixDays } = nurseMatrix;
+                    const presentSet = (n) => new Set(n.presentDates);
+                    return (
+                      <div className="nm-wrap">
+                        <div className="nm-scroll">
+                          <table className="nm-table">
+                            <thead>
+                              <tr>
+                                <th className="nm-th-name">Nurse</th>
+                                <th className="nm-th-stat">Present</th>
+                                <th className="nm-th-stat">Absent</th>
+                                <th className="nm-th-stat">Att%</th>
+                                {dates.map(d => {
+                                  const dt = new Date(d + 'T12:00:00Z');
+                                  return (
+                                    <th key={d} className="nm-th-day" title={d}>
+                                      <div>{dt.getUTCDate()}</div>
+                                      <div className="nm-th-mo">{MONTH_SHORT[dt.getUTCMonth()]}</div>
+                                    </th>
+                                  );
+                                })}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {nurses.map(nurse => {
+                                const ps = presentSet(nurse);
+                                const pctColor = nurse.pct >= 90 ? '#16a34a' : nurse.pct >= 70 ? '#d97706' : '#dc2626';
+                                return (
+                                  <tr key={nurse.nurseId} className="nm-row">
+                                    <td className="nm-td-name">{nurse.name}</td>
+                                    <td className="nm-td-stat nm-present-count">{nurse.presentCount}</td>
+                                    <td className="nm-td-stat nm-absent-count">{nurse.absentCount}</td>
+                                    <td className="nm-td-stat" style={{color: pctColor, fontWeight: 700}}>{nurse.pct}%</td>
+                                    {dates.map(d => (
+                                      <td key={d} className={`nm-cell ${ps.has(d) ? 'nm-present' : 'nm-absent'}`}
+                                        title={ps.has(d) ? `${nurse.name} — Present on ${d}` : `${nurse.name} — Absent on ${d}`}
+                                      >
+                                        {ps.has(d) ? '✓' : '✕'}
+                                      </td>
+                                    ))}
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                        <div className="nm-legend">
+                          <span className="nm-leg-item nm-leg-present">✓ Present</span>
+                          <span className="nm-leg-item nm-leg-absent">✕ Absent</span>
+                          <span className="nm-leg-note">Min. 1 check-in = Present · {matrixDays} total days in range</span>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
+
           </>
         )}
 

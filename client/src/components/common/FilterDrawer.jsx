@@ -2,66 +2,72 @@ import React, { useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import {
   fetchDistricts, fetchFacilities, fetchLounges,
-  setSelectedStates, setSelectedDistricts, setSelectedFacilities, setSelectedLounges, setSelectedMonths
+  setSelectedStates, setSelectedDistricts, setSelectedFacilities, setSelectedLounges,
+  setDateRange, toggleSectionVisibility, resetSectionVisibility,
 } from '../../redux/slices/filterSlice';
 import SearchableSelect from './SearchableSelect';
 import './FilterDrawer.css';
 
-// ── Inline month multi-select ─────────────────────────────────────────────────
-const MonthMultiSelect = ({ options, selected, onChange }) => {
-  const allSelected = selected.length === options.length;
+const SECTION_LABELS = [
+  { key: 'kpiCards',         label: 'KPI Summary Cards' },
+  { key: 'admissionTrend',   label: 'Admission Trend' },
+  { key: 'inbornOutborn',    label: 'Inborn / Outborn Composition' },
+  { key: 'birthWeight',      label: 'Birth Weight Distribution' },
+  { key: 'gender',           label: 'Gender Composition' },
+  { key: 'kmcDuration',      label: 'KMC Duration Trend' },
+  { key: 'earlyCare',        label: 'Early Care Indicators' },
+  { key: 'transport',        label: 'Transportation in KMC Position' },
+  { key: 'discharge',        label: 'Discharge Outcomes' },
+  { key: 'executiveSummary', label: 'Executive Performance Summary' },
+  { key: 'stayDuration',     label: 'Stay Duration Analytics' },
+  { key: 'weightStability',  label: 'Weight Stability Analytics' },
+  { key: 'breastfeeding',    label: 'Breastfeeding Analytics' },
+  { key: 'nurseLounge',      label: 'Nurse Lounge Performance' },
+  { key: 'nurseMatrix',      label: 'Nurse Attendance Matrix' },
+];
 
-  const toggle = (id) => {
-    if (selected.includes(id)) {
-      if (selected.length > 1) onChange(selected.filter(m => m !== id));
-    } else {
-      onChange([...selected, id]);
-    }
-  };
+const todayStr = () => new Date().toISOString().slice(0, 10);
 
-  const toggleAll = () => {
-    onChange(allSelected ? [options[options.length - 1].id] : options.map(o => o.id));
-  };
-
+// ── Date Range Section ────────────────────────────────────────────────────────
+const DateRangePicker = ({ startDate, endDate, onStartChange, onEndChange }) => {
+  const today = todayStr();
   return (
-    <div className="mm-wrap">
-      <div className="mm-header-row">
-        <span className="mm-field-label">Month(s)</span>
-        <div className="mm-badge-count">
-          {allSelected ? 'All' : `${selected.length}`} selected
+    <div className="dr-wrap">
+      <div className="dr-section-label">Date Range</div>
+      <div className="dr-row">
+        <div className="dr-field">
+          <label className="dr-field-label">From Date</label>
+          <input
+            type="date"
+            className="dr-input"
+            value={startDate}
+            max={endDate || today}
+            onChange={e => onStartChange(e.target.value)}
+          />
         </div>
-        <button type="button" className="mm-toggle-all-btn" onClick={toggleAll}>
-          {allSelected ? 'Deselect all' : 'Select all'}
-        </button>
-      </div>
-      <div className="mm-list">
-        {options.map(opt => {
-          const checked = selected.includes(opt.id);
-          return (
-            <label key={opt.id} className={`mm-item ${checked ? 'mm-item-checked' : ''}`}>
-              <span className={`mm-checkbox ${checked ? 'mm-checked' : ''}`}>
-                {checked && (
-                  <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
-                    <path d="M2 6l3 3 5-5" stroke="#fff" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
-                  </svg>
-                )}
-              </span>
-              <input type="checkbox" className="mm-hidden-input" checked={checked} onChange={() => toggle(opt.id)} />
-              <span className="mm-item-name">{opt.name}</span>
-            </label>
-          );
-        })}
+        <div className="dr-field">
+          <label className="dr-field-label">To Date</label>
+          <input
+            type="date"
+            className="dr-input"
+            value={endDate}
+            min={startDate}
+            max={today}
+            onChange={e => onEndChange(e.target.value)}
+          />
+        </div>
       </div>
     </div>
   );
 };
 
 // ── Main FilterDrawer ─────────────────────────────────────────────────────────
-const FilterDrawer = ({ isOpen, onClose, monthOptions }) => {
+const FilterDrawer = ({ isOpen, onClose }) => {
   const dispatch = useDispatch();
   const {
     states, districts, facilities, lounges,
-    selectedStates, selectedDistricts, selectedFacilities, selectedLounges, selectedMonths,
+    selectedStates, selectedDistricts, selectedFacilities, selectedLounges,
+    startDate, endDate, earliestDate, visibility,
     loading
   } = useSelector(state => state.filters);
 
@@ -69,7 +75,8 @@ const FilterDrawer = ({ isOpen, onClose, monthOptions }) => {
   const [draftDistricts,  setDraftDistricts]  = useState([]);
   const [draftFacilities, setDraftFacilities] = useState([]);
   const [draftLounges,    setDraftLounges]    = useState([]);
-  const [draftMonths,     setDraftMonths]     = useState([]);
+  const [draftStartDate,  setDraftStartDate]  = useState('');
+  const [draftEndDate,    setDraftEndDate]    = useState('');
 
   // Sync draft when drawer opens
   useEffect(() => {
@@ -78,7 +85,8 @@ const FilterDrawer = ({ isOpen, onClose, monthOptions }) => {
       setDraftDistricts(selectedDistricts);
       setDraftFacilities(selectedFacilities);
       setDraftLounges(selectedLounges);
-      setDraftMonths(selectedMonths.length ? selectedMonths : monthOptions.map(o => o.id));
+      setDraftStartDate(startDate);
+      setDraftEndDate(endDate);
 
       if (selectedStates.length)     dispatch(fetchDistricts(selectedStates));
       if (selectedDistricts.length)  dispatch(fetchFacilities(selectedDistricts));
@@ -107,14 +115,13 @@ const FilterDrawer = ({ isOpen, onClose, monthOptions }) => {
     if (vals.length) dispatch(fetchLounges(vals));
   };
 
-  const handleLoungesChange = (vals) => setDraftLounges(vals);
-
   const handleReset = () => {
     setDraftStates([]);
     setDraftDistricts([]);
     setDraftFacilities([]);
     setDraftLounges([]);
-    setDraftMonths(monthOptions.map(o => o.id));
+    setDraftStartDate(earliestDate || startDate);
+    setDraftEndDate(todayStr());
   };
 
   const handleApply = () => {
@@ -122,7 +129,7 @@ const FilterDrawer = ({ isOpen, onClose, monthOptions }) => {
     dispatch(setSelectedDistricts(draftDistricts));
     dispatch(setSelectedFacilities(draftFacilities));
     dispatch(setSelectedLounges(draftLounges));
-    dispatch(setSelectedMonths(draftMonths));
+    dispatch(setDateRange({ startDate: draftStartDate, endDate: draftEndDate }));
     onClose();
   };
 
@@ -183,18 +190,46 @@ const FilterDrawer = ({ isOpen, onClose, monthOptions }) => {
             placeholder="All Lounges"
             options={lounges}
             value={draftLounges}
-            onChange={handleLoungesChange}
+            onChange={(vals) => setDraftLounges(vals)}
             disabled={!draftFacilities.length}
             loading={loading.lounges}
             multiSelect
             pluralLabel="Lounges"
           />
 
-          <MonthMultiSelect
-            options={monthOptions}
-            selected={draftMonths}
-            onChange={setDraftMonths}
+          <DateRangePicker
+            startDate={draftStartDate}
+            endDate={draftEndDate}
+            onStartChange={setDraftStartDate}
+            onEndChange={setDraftEndDate}
           />
+
+          {/* ── Dashboard Section Visibility ── */}
+          <div className="vis-wrap">
+            <div className="vis-header">
+              <span className="dr-section-label">Dashboard Sections</span>
+              <button
+                className="vis-reset-btn"
+                onClick={() => dispatch(resetSectionVisibility())}
+                title="Show all sections"
+              >
+                Show All
+              </button>
+            </div>
+            <div className="vis-grid">
+              {SECTION_LABELS.map(({ key, label }) => (
+                <label key={key} className="vis-toggle">
+                  <input
+                    type="checkbox"
+                    className="vis-checkbox"
+                    checked={visibility[key] !== false}
+                    onChange={() => dispatch(toggleSectionVisibility(key))}
+                  />
+                  <span className="vis-label">{label}</span>
+                </label>
+              ))}
+            </div>
+          </div>
         </div>
 
         <div className="filter-drawer-footer">

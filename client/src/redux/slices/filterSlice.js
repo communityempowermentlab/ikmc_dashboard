@@ -3,6 +3,36 @@ import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5001/api';
 
+const todayStr = () => new Date().toISOString().slice(0, 10);
+
+const VISIBILITY_KEY = 'ikmc-section-visibility';
+
+const DEFAULT_VISIBILITY = {
+  kpiCards:        true,
+  admissionTrend:  true,
+  inbornOutborn:   true,
+  birthWeight:     true,
+  gender:          true,
+  kmcDuration:     true,
+  earlyCare:       true,
+  transport:       true,
+  discharge:       true,
+  executiveSummary:true,
+  stayDuration:    true,
+  weightStability: true,
+  breastfeeding:   true,
+  nurseLounge:     true,
+  nurseMatrix:     true,
+};
+
+function loadVisibility() {
+  try {
+    const saved = localStorage.getItem(VISIBILITY_KEY);
+    if (saved) return { ...DEFAULT_VISIBILITY, ...JSON.parse(saved) };
+  } catch {}
+  return { ...DEFAULT_VISIBILITY };
+}
+
 // ── Async Thunks ──────────────────────────────────────────────────────────────
 
 export const fetchStates = createAsyncThunk('filters/fetchStates', async () => {
@@ -10,25 +40,27 @@ export const fetchStates = createAsyncThunk('filters/fetchStates', async () => {
   return res.data;
 });
 
-// Accepts array of stateIds → GET /v1/locations/districts?stateIds=9,27
 export const fetchDistricts = createAsyncThunk('filters/fetchDistricts', async (stateIds) => {
   const ids = Array.isArray(stateIds) ? stateIds.join(',') : stateIds;
   const res = await axios.get(`${API_URL}/v1/locations/districts?stateIds=${ids}`);
   return res.data;
 });
 
-// Accepts array of districtIds → GET /v1/locations/facilities?districtIds=136,137
 export const fetchFacilities = createAsyncThunk('filters/fetchFacilities', async (districtIds) => {
   const ids = Array.isArray(districtIds) ? districtIds.join(',') : districtIds;
   const res = await axios.get(`${API_URL}/v1/locations/facilities?districtIds=${ids}`);
   return res.data;
 });
 
-// Accepts array of facilityIds → GET /v1/locations/lounges?facilityIds=228,229
 export const fetchLounges = createAsyncThunk('filters/fetchLounges', async (facilityIds) => {
   const ids = Array.isArray(facilityIds) ? facilityIds.join(',') : facilityIds;
   const res = await axios.get(`${API_URL}/v1/locations/lounges?facilityIds=${ids}`);
   return res.data;
+});
+
+export const fetchEarliestDate = createAsyncThunk('filters/fetchEarliestDate', async () => {
+  const res = await axios.get(`${API_URL}/v1/admissions/earliest`);
+  return res.data.earliest; // "YYYY-MM-DD" string
 });
 
 // ── Slice ─────────────────────────────────────────────────────────────────────
@@ -39,12 +71,16 @@ const initialState = {
   facilities:[],
   lounges:   [],
 
-  // All selections are arrays of IDs
   selectedStates:     [],
   selectedDistricts:  [],
   selectedFacilities: [],
   selectedLounges:    [],
-  selectedMonths:     [],   // array of "YYYY-MM" strings
+
+  startDate:    '',   // "YYYY-MM-DD" — set from DB earliest on bootstrap
+  endDate:      '',   // "YYYY-MM-DD" — today by default
+  earliestDate: '',   // saved for Reset button
+
+  visibility: loadVisibility(),
 
   loading: { states: false, districts: false, facilities: false, lounges: false },
   error: null,
@@ -78,17 +114,22 @@ const filterSlice = createSlice({
     setSelectedLounges(state, action) {
       state.selectedLounges = action.payload;
     },
-    setSelectedMonths(state, action) {
-      state.selectedMonths = action.payload;
+    setDateRange(state, action) {
+      state.startDate = action.payload.startDate;
+      state.endDate   = action.payload.endDate;
     },
-    toggleMonth(state, action) {
-      const id  = action.payload;
-      const idx = state.selectedMonths.indexOf(id);
-      if (idx === -1) {
-        state.selectedMonths = [...state.selectedMonths, id];
-      } else if (state.selectedMonths.length > 1) {
-        state.selectedMonths = state.selectedMonths.filter(m => m !== id);
+    setStartDate(state, action) { state.startDate = action.payload; },
+    setEndDate(state, action)   { state.endDate   = action.payload; },
+    toggleSectionVisibility(state, action) {
+      const key = action.payload;
+      if (key in state.visibility) {
+        state.visibility[key] = !state.visibility[key];
+        try { localStorage.setItem(VISIBILITY_KEY, JSON.stringify(state.visibility)); } catch {}
       }
+    },
+    resetSectionVisibility(state) {
+      state.visibility = { ...DEFAULT_VISIBILITY };
+      try { localStorage.setItem(VISIBILITY_KEY, JSON.stringify(state.visibility)); } catch {}
     },
   },
   extraReducers: (builder) => {
@@ -107,7 +148,14 @@ const filterSlice = createSlice({
 
       .addCase(fetchLounges.pending,   s => { s.loading.lounges = true; })
       .addCase(fetchLounges.fulfilled, (s, a) => { s.loading.lounges = false; s.lounges = a.payload; })
-      .addCase(fetchLounges.rejected,  (s, a) => { s.loading.lounges = false; s.error = a.error.message; });
+      .addCase(fetchLounges.rejected,  (s, a) => { s.loading.lounges = false; s.error = a.error.message; })
+
+      .addCase(fetchEarliestDate.fulfilled, (s, a) => {
+        const earliest = a.payload || todayStr();
+        s.earliestDate = earliest;
+        s.startDate    = earliest;
+        s.endDate      = todayStr();
+      });
   },
 });
 
@@ -116,8 +164,11 @@ export const {
   setSelectedDistricts,
   setSelectedFacilities,
   setSelectedLounges,
-  setSelectedMonths,
-  toggleMonth,
+  setDateRange,
+  setStartDate,
+  setEndDate,
+  toggleSectionVisibility,
+  resetSectionVisibility,
 } = filterSlice.actions;
 
 export default filterSlice.reducer;

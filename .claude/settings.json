@@ -1,7 +1,10 @@
 {
   "permissions": {
     "allow": [
-      "Bash(node desc_table.js)"
+      "Bash(node desc_table.js)",
+      "Bash(mysql --version)",
+      "Bash(node -e ' *)",
+      "Bash(python3 -c \"import json,sys; data=json.load\\(sys.stdin\\); print\\(data[0]['text']\\)\")"
     ]
   }
 }

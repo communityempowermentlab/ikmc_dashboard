@@ -1,22 +1,24 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
+import { Link } from 'react-router-dom';
 import {
   fetchStates, fetchDistricts, fetchFacilities, fetchLounges,
-  setSelectedStates, setSelectedDistricts, setSelectedFacilities, setSelectedLounges, setSelectedMonths
+  fetchEarliestDate,
+  setSelectedStates, setSelectedDistricts, setSelectedFacilities, setSelectedLounges,
 } from '../../redux/slices/filterSlice';
-import { generateMonthOptions } from '../../utils/formatters';
 import FilterDrawer from './FilterDrawer';
 import './HeaderFilters.css';
 
-const HeaderFilters = ({ onBootstrapComplete }) => {
+const HeaderFilters = () => {
   const dispatch = useDispatch();
   const {
     states, districts, facilities, lounges,
-    selectedStates, selectedDistricts, selectedFacilities, selectedLounges, selectedMonths
+    selectedStates, selectedDistricts, selectedFacilities, selectedLounges,
+    startDate, endDate,
   } = useSelector(state => state.filters);
 
-  const [isDrawerOpen,     setIsDrawerOpen]     = useState(false);
-  const [isBootstrapping,  setIsBootstrapping]  = useState(true);
+  const [isDrawerOpen,    setIsDrawerOpen]    = useState(false);
+  const [isBootstrapping, setIsBootstrapping] = useState(true);
 
   // Initial fetch
   useEffect(() => { dispatch(fetchStates()); }, [dispatch]);
@@ -54,41 +56,22 @@ const HeaderFilters = ({ onBootstrapComplete }) => {
     }
   }, [facilities, isBootstrapping, selectedDistricts.length, selectedFacilities.length, dispatch]);
 
-  // Step 4: auto-select MNCU lounge (id=222) → finish bootstrap
+  // Step 4: auto-select MNCU lounge (id=222) → finish bootstrap → fetch date range defaults
   useEffect(() => {
     if (isBootstrapping && lounges.length > 0 && selectedFacilities.length && !selectedLounges.length) {
       const l = lounges.find(l => l.id === 222 || String(l.id) === '222') || lounges[0];
       if (l) {
         dispatch(setSelectedLounges([l.id]));
         setIsBootstrapping(false);
-        if (onBootstrapComplete) onBootstrapComplete();
+        dispatch(fetchEarliestDate());
       }
     }
-  }, [lounges, isBootstrapping, selectedFacilities.length, selectedLounges.length, dispatch, onBootstrapComplete]);
+  }, [lounges, isBootstrapping, selectedFacilities.length, selectedLounges.length, dispatch]);
 
-  // Month options (Jan 2026 → current month)
-  const monthOptions = useMemo(() => generateMonthOptions(2026, 1), []);
-
-  // Default: all months selected
-  useEffect(() => {
-    if (selectedMonths.length === 0 && monthOptions.length > 0) {
-      dispatch(setSelectedMonths(monthOptions.map(m => m.id)));
-    }
-  }, [selectedMonths.length, monthOptions, dispatch]);
-
-  // Filters button badge label
-  const filterBadge = useMemo(() => {
-    const parts = [];
-    if (selectedFacilities.length === 1) {
-      // show nothing extra — facility name too long for badge
-    } else if (selectedFacilities.length > 1) {
-      parts.push(`${selectedFacilities.length} facilities`);
-    }
-    if (selectedMonths.length && selectedMonths.length < monthOptions.length) {
-      parts.push(`${selectedMonths.length} mo`);
-    }
-    return parts.length ? parts.join(' · ') : null;
-  }, [selectedFacilities, selectedMonths, monthOptions]);
+  // Date range badge for filter button
+  const filterBadge = startDate && endDate
+    ? `${startDate} → ${endDate}`
+    : null;
 
   return (
     <div className="hf-bar">
@@ -112,10 +95,13 @@ const HeaderFilters = ({ onBootstrapComplete }) => {
         )}
       </button>
 
+      <Link to="/district-weekly-dashboard" className="btn-district-view">
+        District View
+      </Link>
+
       <FilterDrawer
         isOpen={isDrawerOpen}
         onClose={() => setIsDrawerOpen(false)}
-        monthOptions={monthOptions}
       />
     </div>
   );
