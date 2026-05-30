@@ -10,6 +10,8 @@ import './DistrictDashboard.css';
 
 const DAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+const toTitleCase = s => s.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -28,7 +30,7 @@ function computeInsights(mat, kpis) {
   // Overall app use sentiment
   insights.push({
     type: kpis.appUsePct >= 70 ? 'positive' : kpis.appUsePct >= 40 ? 'warning' : 'critical',
-    text: `Overall KMC app usage is ${kpis.appUsePct}% — ${kpis.appUseDays} of ${kpis.possibleFacDays} possible facility-days had activity.`,
+    text: `Overall iKMC app usage is ${kpis.appUsePct}% — ${kpis.appUseDays} of ${kpis.possibleFacDays} possible facility-days had activity.`,
   });
 
   // Best performing facility
@@ -37,7 +39,7 @@ function computeInsights(mat, kpis) {
     const best = activeFacs[0];
     insights.push({
       type: 'positive',
-      text: `${best.name} achieved the highest weekly KMC app usage at ${best.appUsePct}% (${best.appUseDays} of ${totalDays} days).`,
+      text: `${best.name} achieved the highest weekly iKMC app usage at ${best.appUsePct}% (${best.appUseDays} of ${totalDays} days).`,
     });
   }
 
@@ -48,7 +50,7 @@ function computeInsights(mat, kpis) {
       + (noActivity.length > 2 ? ` and ${noActivity.length - 2} more` : '');
     insights.push({
       type: noActivity.length >= Math.ceil(facs.length / 2) ? 'critical' : 'warning',
-      text: `${noActivity.length} facilit${noActivity.length > 1 ? 'ies' : 'y'} had no KMC app activity this week: ${names}.`,
+      text: `${noActivity.length} facilit${noActivity.length > 1 ? 'ies' : 'y'} had no iKMC app activity this week: ${names}.`,
     });
   }
 
@@ -57,7 +59,7 @@ function computeInsights(mat, kpis) {
   if (fullActivity.length) {
     insights.push({
       type: 'positive',
-      text: `${fullActivity.length} facilit${fullActivity.length > 1 ? 'ies' : 'y'} maintained complete daily KMC app usage throughout the week.`,
+      text: `${fullActivity.length} facilit${fullActivity.length > 1 ? 'ies' : 'y'} maintained complete daily iKMC app usage throughout the week.`,
     });
   }
 
@@ -178,12 +180,19 @@ export default function DistrictDashboard() {
             <p className="dd-subtitle">
               {kpis?.period
                 ? `${kpis.period.start} — ${kpis.period.end} · ${kpis.period.totalDays} days`
-                : 'Facility-level KMC monitoring dashboard'}
+                : 'Facility-level iKMC monitoring dashboard'}
             </p>
           </div>
         </div>
 
         <div className="dd-header-right">
+          <button className="dd-export-btn" onClick={() => window.print()} title="Export as PDF">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/>
+              <rect x="6" y="14" width="12" height="8"/>
+            </svg>
+            Export PDF
+          </button>
           <Link to="/dashboard" className="dd-main-dash-btn">← Main Dashboard</Link>
         </div>
       </header>
@@ -197,7 +206,7 @@ export default function DistrictDashboard() {
             onChange={e => { setStateId(e.target.value); setDistrictCode(''); setFacilityId(''); }}
           >
             <option value="">All States</option>
-            {stateOptions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+            {stateOptions.map(s => <option key={s.id} value={s.id}>{toTitleCase(s.name)}</option>)}
           </select>
         </FilterGroup>
 
@@ -260,7 +269,7 @@ export default function DistrictDashboard() {
 
         {/* ── KPI Cards ───────────────────────────────────────────────────── */}
         <section className="dd-kpi-section">
-          <KpiCard label="KMC Facilities"  value={k.totalFacilities ?? '—'} unit="total"           accent="#6366f1" loading={loading.kpis} />
+          <KpiCard label="iKMC Facilities"  value={k.totalFacilities ?? '—'} unit="total"           accent="#6366f1" loading={loading.kpis} />
           <KpiCard label="Daily App Use"   value={k.appUsePct != null ? `${k.appUsePct}%` : '—'}
                    sub={`${k.appUseDays ?? 0} / ${k.possibleFacDays ?? 0} facility-days`}
                    accent="#0ea5e9" loading={loading.kpis} />
@@ -286,7 +295,7 @@ export default function DistrictDashboard() {
             <div className="dd-card-header">
               <h2 className="dd-card-title">Facility Performance Matrix</h2>
               <p className="dd-card-sub">
-                Daily KMC app use (squares) + period aggregates per facility
+                Daily iKMC app use (squares) + period aggregates per facility
               </p>
             </div>
 

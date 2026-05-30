@@ -96,6 +96,27 @@
   color: #fff;
 }
 
+/* Export PDF button */
+.dd-export-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.25);
+  background: rgba(255,255,255,0.1);
+  color: #e2e8f0;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+.dd-export-btn:hover {
+  background: rgba(255,255,255,0.18);
+  color: #fff;
+}
+
 /* Logo — white pill so it's readable on the dark header */
 .dd-header-logo {
   height: 38px;
@@ -478,3 +499,29 @@ thead .dd-sticky-col { z-index: 3; background: #f8fafc !important; }
 }
 .dd-leg-on  { background: #22c55e; }
 .dd-leg-off { background: #e5e7eb; }
+
+/* ─── Print / Export PDF ─────────────────────────────── */
+@media print {
+  @page { margin: 16mm; size: A4 landscape; }
+
+  .dd-header        { position: static; box-shadow: none; background: #1e293b !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .dd-export-btn    { display: none !important; }
+  .dd-filter-bar    { display: none !important; }
+  .dd-body          { padding: 12px 0; gap: 16px; }
+  .dd-kpi-section   { grid-template-columns: repeat(5, 1fr); }
+  .dd-kpi-card,
+  .dd-card,
+  .dd-insights-section { box-shadow: none; border: 1px solid #e2e8f0; break-inside: avoid; }
+  .dd-matrix-wrap   { overflow: visible; }
+  .dd-matrix-table  { font-size: 11px; }
+  .dd-insights-grid { grid-template-columns: repeat(2, 1fr); }
+  .dd-insight-card  { break-inside: avoid; }
+  .dd-insight-positive,
+  .dd-insight-warning,
+  .dd-insight-critical,
+  .dd-insight-info  { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .dd-sq--on        { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .dd-pct-hi,
+  .dd-pct-mid,
+  .dd-pct-lo        { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
