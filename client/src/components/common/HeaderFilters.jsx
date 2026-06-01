@@ -4,73 +4,29 @@ import { Link } from 'react-router-dom';
 import {
   fetchStates, fetchDistricts, fetchFacilities, fetchLounges,
   fetchEarliestDate,
-  setSelectedStates, setSelectedDistricts, setSelectedFacilities, setSelectedLounges,
 } from '../../redux/slices/filterSlice';
 import FilterDrawer from './FilterDrawer';
 import './HeaderFilters.css';
 
+const fmtDDMMYYYY = s => (s ? `${s.slice(8)}-${s.slice(5, 7)}-${s.slice(0, 4)}` : '');
+
 const HeaderFilters = () => {
   const dispatch = useDispatch();
-  const {
-    states, districts, facilities, lounges,
-    selectedStates, selectedDistricts, selectedFacilities, selectedLounges,
-    startDate, endDate,
-  } = useSelector(state => state.filters);
+  const { startDate, endDate } = useSelector(state => state.filters);
 
-  const [isDrawerOpen,    setIsDrawerOpen]    = useState(false);
-  const [isBootstrapping, setIsBootstrapping] = useState(true);
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
-  // Initial fetch
-  useEffect(() => { dispatch(fetchStates()); }, [dispatch]);
-
-  // Step 1: auto-select UP state (id=9)
+  // Bootstrap: load all filter options + date range on mount
   useEffect(() => {
-    if (isBootstrapping && states.length > 0 && !selectedStates.length) {
-      const up = states.find(s => s.id === 9 || String(s.id) === '9') || states[0];
-      if (up) {
-        dispatch(setSelectedStates([up.id]));
-        dispatch(fetchDistricts([up.id]));
-      }
-    }
-  }, [states, isBootstrapping, selectedStates.length, dispatch]);
+    dispatch(fetchStates());
+    dispatch(fetchDistricts([]));
+    dispatch(fetchFacilities([]));
+    dispatch(fetchLounges([]));
+    dispatch(fetchEarliestDate());
+  }, [dispatch]);
 
-  // Step 2: auto-select Ghaziabad district (id=136)
-  useEffect(() => {
-    if (isBootstrapping && districts.length > 0 && selectedStates.length && !selectedDistricts.length) {
-      const d = districts.find(d => d.id === 136 || String(d.id) === '136') || districts[0];
-      if (d) {
-        dispatch(setSelectedDistricts([d.id]));
-        dispatch(fetchFacilities([d.id]));
-      }
-    }
-  }, [districts, isBootstrapping, selectedStates.length, selectedDistricts.length, dispatch]);
-
-  // Step 3: auto-select DWH Ghaziabad facility (id=228)
-  useEffect(() => {
-    if (isBootstrapping && facilities.length > 0 && selectedDistricts.length && !selectedFacilities.length) {
-      const f = facilities.find(f => f.id === 228 || String(f.id) === '228') || facilities[0];
-      if (f) {
-        dispatch(setSelectedFacilities([f.id]));
-        dispatch(fetchLounges([f.id]));
-      }
-    }
-  }, [facilities, isBootstrapping, selectedDistricts.length, selectedFacilities.length, dispatch]);
-
-  // Step 4: auto-select MNCU lounge (id=222) → finish bootstrap → fetch date range defaults
-  useEffect(() => {
-    if (isBootstrapping && lounges.length > 0 && selectedFacilities.length && !selectedLounges.length) {
-      const l = lounges.find(l => l.id === 222 || String(l.id) === '222') || lounges[0];
-      if (l) {
-        dispatch(setSelectedLounges([l.id]));
-        setIsBootstrapping(false);
-        dispatch(fetchEarliestDate());
-      }
-    }
-  }, [lounges, isBootstrapping, selectedFacilities.length, selectedLounges.length, dispatch]);
-
-  // Date range badge for filter button
   const filterBadge = startDate && endDate
-    ? `${startDate} → ${endDate}`
+    ? `${fmtDDMMYYYY(startDate)} → ${fmtDDMMYYYY(endDate)}`
     : null;
 
   return (

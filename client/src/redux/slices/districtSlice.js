@@ -24,16 +24,42 @@ export const fetchFacilityMatrix = createAsyncThunk('district/fetchMatrix', asyn
   return res.data;
 });
 
+export const fetchDailyAppUsage = createAsyncThunk('district/fetchDailyAppUsage', async (args) => {
+  const res = await axios.get(`${API_URL}/v1/district/dailyAppUsage?${buildParams(args)}`);
+  return res.data;
+});
+
+export const fetchWeeklyInsights = createAsyncThunk(
+  'district/fetchWeeklyInsights',
+  async ({ kpis, facilities, period }, { rejectWithValue }) => {
+    try {
+      const res = await axios.post(`${API_URL}/v1/district/generateInsights`, {
+        kpis, facilities, period,
+      });
+      return res.data.insights;
+    } catch (err) {
+      // Forward the server's error message so it can be displayed to the user
+      const msg = err.response?.data?.error || err.message || 'Failed to generate insights';
+      return rejectWithValue(msg);
+    }
+  }
+);
+
 const districtSlice = createSlice({
   name: 'district',
   initialState: {
-    filterOptions: null,
-    kpis:          null,
-    matrix:        null,
+    filterOptions:   null,
+    kpis:            null,
+    matrix:          null,
+    dailyAppUsage:   null,
+    weeklyInsights:  null,
+    insightsError:   null,  // stores actual Gemini error message for display
     loading: {
-      filters: false,
-      kpis:    false,
-      matrix:  false,
+      filters:    false,
+      kpis:       false,
+      matrix:     false,
+      appUsage:   false,
+      insights:   false,
     },
     error: null,
   },
@@ -50,7 +76,15 @@ const districtSlice = createSlice({
 
       .addCase(fetchFacilityMatrix.pending,   s => { s.loading.matrix = true; })
       .addCase(fetchFacilityMatrix.fulfilled, (s, a) => { s.loading.matrix = false; s.matrix = a.payload; })
-      .addCase(fetchFacilityMatrix.rejected,  (s, a) => { s.loading.matrix = false; s.error = a.error.message; });
+      .addCase(fetchFacilityMatrix.rejected,  (s, a) => { s.loading.matrix = false; s.error = a.error.message; })
+
+      .addCase(fetchDailyAppUsage.pending,   s => { s.loading.appUsage = true; })
+      .addCase(fetchDailyAppUsage.fulfilled, (s, a) => { s.loading.appUsage = false; s.dailyAppUsage = a.payload; })
+      .addCase(fetchDailyAppUsage.rejected,  (s, a) => { s.loading.appUsage = false; s.error = a.error.message; })
+
+      .addCase(fetchWeeklyInsights.pending,   s => { s.loading.insights = true; s.weeklyInsights = null; s.insightsError = null; })
+      .addCase(fetchWeeklyInsights.fulfilled, (s, a) => { s.loading.insights = false; s.weeklyInsights = a.payload; s.insightsError = null; })
+      .addCase(fetchWeeklyInsights.rejected,  (s, a) => { s.loading.insights = false; s.insightsError = a.payload || a.error.message || 'Unknown error'; });
   },
 });
 

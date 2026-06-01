@@ -35,8 +35,8 @@ const BF_COLORS     = { exclusive: '#8b5cf6', non_exclusive: '#f59e0b' };
 
 function fmtDate(d) {
   if (!d) return '';
-  const dt = new Date(d + 'T00:00:00');
-  return dt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+  const [y, m, day] = d.split('-');
+  return `${day}-${m}-${y}`;
 }
 
 // Semantic color mapping for discharge categories
@@ -153,16 +153,16 @@ const Dashboard = () => {
   const selectedFacilitiesKey = [...selectedFacilities].sort().join(',');
   const selectedLoungesKey    = [...selectedLounges].sort().join(',');
 
-  // ── Trigger skeleton when location or date range changes ─────────────────
+  // ── Trigger skeleton when date range / location changes ─────────────────
   useEffect(() => {
-    if (selectedLounges.length && startDate && endDate) {
+    if (startDate && endDate) {
       setIsDashboardLoading(true);
       const timer = setTimeout(() => setIsDashboardLoading(false), 1200);
       return () => clearTimeout(timer);
     } else {
       setIsDashboardLoading(true);
     }
-  }, [selectedLoungesKey, startDate, endDate]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedFacilitiesKey, selectedLoungesKey, startDate, endDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset insight filter + mobile index whenever dashboard filters change
   useEffect(() => {
@@ -176,9 +176,11 @@ const Dashboard = () => {
 
   // ── Fetch all admission data when filters change ──────────────────────────
   useEffect(() => {
-    if (!selectedFacilities.length || !startDate || !endDate) return;
-    const params = { facilityIds: selectedFacilitiesKey, startDate, endDate };
-    if (selectedLounges.length) params.loungeIds = selectedLoungesKey;
+    if (!startDate || !endDate) return;
+    // Empty facilityIds → server returns data for all facilities
+    const params = { startDate, endDate };
+    if (selectedFacilitiesKey) params.facilityIds = selectedFacilitiesKey;
+    if (selectedLoungesKey)    params.loungeIds   = selectedLoungesKey;
     dispatch(fetchAdmissionKpi(params));
     dispatch(fetchAdmissionTrend(params));
     dispatch(fetchAdmissionComposition(params));
@@ -913,7 +915,13 @@ const Dashboard = () => {
                       title: 'Total Admissions KPI',
                       sourceTable: 'babyAdmission',
                       appliedLogic: 'Count of unique admission IDs (status = 1 OR 2).',
-                      queryLogic: 'SELECT COUNT(id) FROM babyAdmission WHERE facilityId IN (...)',
+                      queryLogic: `SELECT COUNT(*) AS totalAdmissions
+FROM   babyAdmission ba
+JOIN   loungeMaster lm ON ba.loungeId = lm.loungeId
+WHERE  lm.facilityId IN (:facilityIds)   -- omit for all facilities
+  AND  ba.status IN (1, 2)
+  AND  DATE(ba.admissionDateTime) BETWEEN :startDate AND :endDate
+  AND  ba.loungeId IN (:loungeIds)        -- omit when no lounge filter`,
                       formulas: ['Total Admissions = COUNT(id)']
                     }} />
                   </div>
@@ -1085,7 +1093,16 @@ const Dashboard = () => {
                     sourceTable: 'babyAdmission',
                     appliedLogic: 'Monthly grouped count of admissions.',
                     groupingLogic: 'GROUP BY YEAR(admissionDate), MONTH(admissionDate)',
-                    queryLogic: 'SELECT YEAR(admissionDate), MONTH(admissionDate), COUNT(id) FROM babyAdmission GROUP BY 1, 2'
+                    queryLogic: `SELECT YEAR(ba.admissionDateTime)  AS yr,
+       MONTH(ba.admissionDateTime) AS mo,
+       COUNT(*) AS count
+FROM   babyAdmission ba
+JOIN   loungeMaster lm ON ba.loungeId = lm.loungeId
+WHERE  lm.facilityId IN (:facilityIds)
+  AND  ba.status IN (1, 2)
+  AND  DATE(ba.admissionDateTime) BETWEEN :startDate AND :endDate
+GROUP  BY YEAR(ba.admissionDateTime), MONTH(ba.admissionDateTime)
+ORDER  BY yr ASC, mo ASC`
                   }} />
                 </div>
                 <div className="chart-wrap chart-fill">
@@ -1101,7 +1118,15 @@ const Dashboard = () => {
                   <DebugIcon onClick={setActiveDebugInfo} info={{
                     title: 'Inborn vs Outborn Composition',
                     sourceTable: 'babyAdmission',
-                    appliedLogic: 'Counts grouped by babyType (1=Inborn, 2=Outborn).',
+                    appliedLogic: 'Counts grouped by typeOfBorn (Inborn / Outborn). Only admissions with a valid typeOfBorn are included.',
+                    queryLogic: `SELECT ba.typeOfBorn, COUNT(*) AS count
+FROM   babyAdmission ba
+JOIN   loungeMaster lm ON ba.loungeId = lm.loungeId
+WHERE  lm.facilityId IN (:facilityIds)
+  AND  ba.status IN (1, 2)
+  AND  DATE(ba.admissionDateTime) BETWEEN :startDate AND :endDate
+  AND  ba.typeOfBorn IN ('Inborn', 'Outborn')
+GROUP  BY ba.typeOfBorn`,
                     formulas: ['Inborn % = (Inborn / Total) * 100', 'Outborn % = (Outborn / Total) * 100']
                   }} />
                 </div>
@@ -1140,9 +1165,23 @@ const Dashboard = () => {
                   Birth weight distribution
                   <DebugIcon onClick={setActiveDebugInfo} info={{
                     title: 'Birth Weight Distribution',
-                    sourceTable: 'babyAdmission',
-                    appliedLogic: 'Admissions categorized by birthWeight metric.',
-                    formulas: ['VLBW = <1800g', 'LBW = 1800-2499g', 'Normal = >=2500g']
+                    sourceTable: 'babyAdmission, babyDailyWeight',
+                    appliedLogic: 'Joins babyDailyWeight (weightType=1 = birth weight) per admission. Null weight → "No Data" category.',
+                    queryLogic: `SELECT CASE
+         WHEN bdw.babyWeight IS NULL THEN 'No Data'
+         WHEN bdw.babyWeight < 1800  THEN 'VLBW (<1800g)'
+         WHEN bdw.babyWeight < 2500  THEN 'LBW (1800–2499g)'
+         ELSE                             'Normal (≥2500g)'
+       END AS category,
+       COUNT(*) AS count
+FROM   babyAdmission ba
+JOIN   loungeMaster lm   ON ba.loungeId = lm.loungeId
+LEFT   JOIN babyDailyWeight bdw ON bdw.babyAdmissionId = ba.id AND bdw.weightType = 1
+WHERE  lm.facilityId IN (:facilityIds)
+  AND  ba.status IN (1, 2)
+  AND  DATE(ba.admissionDateTime) BETWEEN :startDate AND :endDate
+GROUP  BY category`,
+                    formulas: ['VLBW = <1800g', 'LBW = 1800–2499g', 'Normal = ≥2500g']
                   }} />
                 </div>
                 {admLoading.birthWeight ? (
@@ -1190,7 +1229,16 @@ const Dashboard = () => {
                     title: 'Gender Composition',
                     sourceTable: 'babyAdmission',
                     appliedLogic: 'Counts by babyGender (1=Male, 2=Female). Includes Inborn/Outborn split.',
-                    queryLogic: 'SELECT babyGender, babyType, COUNT(id) FROM babyAdmission GROUP BY babyGender, babyType'
+                    queryLogic: `SELECT br.babyGender, ba.typeOfBorn, COUNT(*) AS count
+FROM   babyAdmission ba
+JOIN   loungeMaster    lm ON ba.loungeId = lm.loungeId
+JOIN   babyRegistration br ON br.babyId  = ba.babyId
+WHERE  lm.facilityId IN (:facilityIds)
+  AND  ba.status IN (1, 2)
+  AND  DATE(ba.admissionDateTime) BETWEEN :startDate AND :endDate
+  AND  br.babyGender IN ('Male', 'Female')
+  AND  ba.typeOfBorn  IN ('Inborn', 'Outborn')
+GROUP  BY br.babyGender, ba.typeOfBorn`
                   }} />
                 </div>
                 {admLoading.gender ? (
@@ -1247,9 +1295,25 @@ const Dashboard = () => {
                   Avg KMC duration / baby / day
                   <DebugIcon onClick={setActiveDebugInfo} info={{
                     title: 'KMC Duration Trend',
-                    sourceTable: 'kmcTransaction, babyAdmission',
-                    appliedLogic: 'Average KMC hours per baby per day per month.',
-                    formulas: ['Avg Hours = SUM(kmcHours) / SUM(babyDays)']
+                    sourceTable: 'babyDailyKMC, babyAdmission, loungeMaster',
+                    appliedLogic: 'Monthly average KMC hours per baby-day. A "baby-day" = one unique (babyAdmissionId, kmcDate) pair. Only records with a non-null kmcDurationByMother or kmcDurationByOther are included.',
+                    queryLogic: `SELECT YEAR(bdk.kmcDate)  AS yr,
+       MONTH(bdk.kmcDate) AS mo,
+       COUNT(DISTINCT CONCAT(bdk.babyAdmissionId, '-', bdk.kmcDate)) AS babyDays,
+       ROUND(SUM(
+         COALESCE(TIME_TO_SEC(CAST(bdk.kmcDurationByMother AS TIME)), 0) +
+         COALESCE(TIME_TO_SEC(CAST(bdk.kmcDurationByOther  AS TIME)), 0)
+       ) / 3600, 2) AS totalKmcHours
+FROM   babyDailyKMC bdk
+JOIN   babyAdmission ba ON bdk.babyAdmissionId = ba.id
+JOIN   loungeMaster  lm ON ba.loungeId = lm.loungeId
+WHERE  lm.facilityId IN (:facilityIds)
+  AND  ba.status IN (1, 2)
+  AND  DATE(bdk.kmcDate) BETWEEN :startDate AND :endDate
+  AND  (bdk.kmcDurationByMother IS NOT NULL OR bdk.kmcDurationByOther IS NOT NULL)
+GROUP  BY yr, mo
+ORDER  BY yr ASC, mo ASC`,
+                    formulas: ['Avg KMC hrs / baby-day = totalKmcHours / babyDays per month']
                   }} />
                 </div>
                 {(() => {
@@ -1284,8 +1348,42 @@ const Dashboard = () => {
             {visibility.earlyCare !== false && <div className="row-2col-even">
               {/* ── KMC within 2 hours ── */}
               {[
-                { key: 'kmc', title: 'KMC Initiated within 2 Hours',         icon: '🫀', debug: { title: 'Early Care: KMC', sourceTable: 'babyAdmission', formulas: ['KMC < 2h % = (Yes / Total) * 100'] } },
-                { key: 'bf',  title: 'Breastfeeding Initiated within 1 Hour', icon: '🤱', debug: { title: 'Early Care: Breastfeeding', sourceTable: 'babyAdmission', formulas: ['BF < 1h % = (Yes / Total) * 100'] } },
+                { key: 'kmc', title: 'KMC Initiated within 2 Hours', icon: '🫀', debug: {
+                  title: 'Early Care: KMC Initiated within 2 Hours',
+                  sourceTable: 'babyAdmission, babyRegistration',
+                  appliedLogic: 'Counts Inborn and Outborn babies where kmcInitiated2Hour is recorded (11=Yes, 12=No). Only admissions with valid typeOfBorn and both early-care fields are included.',
+                  queryLogic: `SELECT ba.typeOfBorn,
+       br.kmcInitiated2Hour,
+       COUNT(*) AS cnt
+FROM   babyAdmission ba
+JOIN   loungeMaster    lm ON ba.loungeId = lm.loungeId
+JOIN   babyRegistration br ON br.babyId  = ba.babyId
+WHERE  lm.facilityId IN (:facilityIds)
+  AND  ba.status IN (1, 2)
+  AND  DATE(ba.admissionDateTime) BETWEEN :startDate AND :endDate
+  AND  ba.typeOfBorn IN ('Inborn', 'Outborn')
+  AND  br.kmcInitiated2Hour IN (11, 12)
+GROUP  BY ba.typeOfBorn, br.kmcInitiated2Hour
+-- 11 = Yes (within 2h), 12 = No`,
+                  formulas: ['KMC < 2h % = (kmcInitiated2Hour=11 count / total with field) × 100'] } },
+                { key: 'bf', title: 'Breastfeeding Initiated within 1 Hour', icon: '🤱', debug: {
+                  title: 'Early Care: Breastfeeding Initiated within 1 Hour',
+                  sourceTable: 'babyAdmission, babyRegistration',
+                  appliedLogic: 'Counts Inborn and Outborn babies where breastfeedInitiated1Hour is recorded (11=Yes, 12=No).',
+                  queryLogic: `SELECT ba.typeOfBorn,
+       br.breastfeedInitiated1Hour,
+       COUNT(*) AS cnt
+FROM   babyAdmission ba
+JOIN   loungeMaster    lm ON ba.loungeId = lm.loungeId
+JOIN   babyRegistration br ON br.babyId  = ba.babyId
+WHERE  lm.facilityId IN (:facilityIds)
+  AND  ba.status IN (1, 2)
+  AND  DATE(ba.admissionDateTime) BETWEEN :startDate AND :endDate
+  AND  ba.typeOfBorn IN ('Inborn', 'Outborn')
+  AND  br.breastfeedInitiated1Hour IN (11, 12)
+GROUP  BY ba.typeOfBorn, br.breastfeedInitiated1Hour
+-- 11 = Yes (within 1h), 12 = No`,
+                  formulas: ['BF < 1h % = (breastfeedInitiated1Hour=11 count / total with field) × 100'] } },
               ].map(({ key, title, debug }) => {
                 const data    = admEarlyCare?.[key];
                 const loading = admLoading.earlyCare;
@@ -1386,10 +1484,21 @@ const Dashboard = () => {
                 <div className="card-title">
                   Baby Transportation in KMC Position
                   <DebugIcon onClick={setActiveDebugInfo} info={{
-                    title: 'Transportation in KMC',
+                    title: 'Transportation in KMC Position',
                     sourceTable: 'babyAdmission',
-                    appliedLogic: 'Counts based on transportType and kmcTransport position.',
-                    formulas: ['Transferred in KMC % = (Yes / Total Transferred) * 100']
+                    appliedLogic: 'Counts admissions where babyTransferredCondition is recorded (11 = Transferred with Mother in KMC, 12 = Transferred with Surrogate). Split by Inborn / Outborn.',
+                    queryLogic: `SELECT ba.typeOfBorn,
+       ba.babyTransferredCondition,
+       COUNT(*) AS count
+FROM   babyAdmission ba
+JOIN   loungeMaster lm ON ba.loungeId = lm.loungeId
+WHERE  lm.facilityId IN (:facilityIds)
+  AND  ba.status IN (1, 2)
+  AND  DATE(ba.admissionDateTime) BETWEEN :startDate AND :endDate
+  AND  ba.babyTransferredCondition IN (11, 12)
+GROUP  BY ba.typeOfBorn, ba.babyTransferredCondition
+-- 11 = Transferred with Mother, 12 = Transferred with Surrogate`,
+                    formulas: ['Transferred in KMC % = (condition=11 / total transferred) × 100']
                   }} />
                 </div>
                 {admLoading.transport ? (
@@ -1456,8 +1565,20 @@ const Dashboard = () => {
                 <DebugIcon onClick={setActiveDebugInfo} info={{
                   title: 'Discharge Outcomes',
                   sourceTable: 'babyAdmission',
-                  appliedLogic: 'Discharge categories grouped and counted.',
-                  formulas: ['Mortality % = (Died / Total Discharged) * 100', 'LAMA % = (LAMA / Total Discharged) * 100']
+                  appliedLogic: 'Groups admissions by typeOfDischarge and typeOfBorn. Only admissions with a non-empty typeOfDischarge field are counted.',
+                  queryLogic: `SELECT ba.typeOfDischarge,
+       ba.typeOfBorn,
+       COUNT(*) AS count
+FROM   babyAdmission ba
+JOIN   loungeMaster lm ON ba.loungeId = lm.loungeId
+WHERE  lm.facilityId IN (:facilityIds)
+  AND  ba.status IN (1, 2)
+  AND  DATE(ba.admissionDateTime) BETWEEN :startDate AND :endDate
+  AND  ba.typeOfDischarge IS NOT NULL
+  AND  ba.typeOfDischarge != ''
+GROUP  BY ba.typeOfDischarge, ba.typeOfBorn
+ORDER  BY ba.typeOfDischarge`,
+                  formulas: ['Mortality % = (Died / Total Discharged) × 100', 'LAMA % = (LAMA / Total Discharged) × 100']
                 }} />
                 {admDischarge && !admLoading.discharge && (
                   <span style={{marginLeft:'8px', fontSize:'11px', fontWeight:500, color:'var(--text-muted)'}}>
@@ -1523,10 +1644,25 @@ const Dashboard = () => {
                   <div className="card-title" style={{marginBottom:'2px'}}>
                     Executive performance summary
                     <DebugIcon onClick={setActiveDebugInfo} info={{
-                      title: 'Facility Summary Table',
-                      sourceTable: 'babyAdmission, kmcTransaction',
-                      appliedLogic: 'Aggregated monthly table of all key indicators.',
-                      groupingLogic: 'Grouped by Month-Year over the selected period.'
+                      title: 'Executive Performance Summary Table',
+                      sourceTable: 'babyAdmission, babyDailyWeight, babyRegistration, babyDailyKMC',
+                      appliedLogic: 'Monthly roll-up of admissions, VLBW count, discharge count, early-care rates, KMC avg hours, and transport counts. Each month is one row.',
+                      queryLogic: `-- Primary admissions + VLBW + discharge count
+SELECT CONCAT(YEAR(ba.admissionDateTime), '-',
+              LPAD(MONTH(ba.admissionDateTime), 2, '0')) AS mKey,
+       COUNT(*) AS admCount,
+       SUM(CASE WHEN bdw.babyWeight < 1800 THEN 1 ELSE 0 END) AS bwLt1800,
+       SUM(CASE WHEN ba.typeOfDischarge IS NOT NULL
+                 AND ba.typeOfDischarge != '' THEN 1 ELSE 0 END) AS dcCount
+FROM   babyAdmission ba
+JOIN   loungeMaster lm  ON ba.loungeId = lm.loungeId
+LEFT   JOIN babyDailyWeight bdw ON bdw.babyAdmissionId = ba.id AND bdw.weightType = 1
+WHERE  lm.facilityId IN (:facilityIds)
+  AND  ba.status IN (1, 2)
+  AND  DATE(ba.admissionDateTime) BETWEEN :startDate AND :endDate
+GROUP  BY mKey ORDER BY mKey
+-- Followed by 3 parallel queries for early-care, KMC avg, and transport`,
+                      groupingLogic: 'Grouped by YYYY-MM (Month-Year) over the selected period.'
                     }} />
                   </div>
                   <div className="est-subtitle">Month-wise indicator comparison · {sectionLabel}</div>
@@ -1799,9 +1935,27 @@ const Dashboard = () => {
                   <DebugIcon onClick={setActiveDebugInfo} info={{
                     title: 'Stay Duration Distribution',
                     sourceTable: 'babyAdmission',
-                    appliedLogic: 'Duration = TIMESTAMPDIFF(HOUR, admissionDateTime, COALESCE(dateOfDischarge, NOW())). Active admissions use NOW() as proxy.',
-                    formulas: ['Stay Hours = TIMESTAMPDIFF(HOUR, admissionDateTime, COALESCE(dateOfDischarge, NOW()))'],
-                    categories: ['0–24h', '24–48h', '48–72h', '>72h']
+                    appliedLogic: 'Duration = TIMESTAMPDIFF(HOUR, admissionDateTime, COALESCE(dateOfDischarge, NOW())). Active admissions (no discharge yet) use NOW() as proxy. Negative durations excluded.',
+                    queryLogic: `SELECT CASE
+         WHEN stay_hours <= 24  THEN '0–24 Hours'
+         WHEN stay_hours <= 48  THEN '24–48 Hours'
+         WHEN stay_hours <= 72  THEN '48–72 Hours'
+         ELSE                        'More than 72 Hours'
+       END AS category,
+       COUNT(*) AS count
+FROM (
+  SELECT TIMESTAMPDIFF(HOUR, ba.admissionDateTime,
+           COALESCE(ba.dateOfDischarge, NOW())) AS stay_hours
+  FROM   babyAdmission ba
+  JOIN   loungeMaster lm ON ba.loungeId = lm.loungeId
+  WHERE  lm.facilityId IN (:facilityIds)
+    AND  ba.status IN (1, 2)
+    AND  DATE(ba.admissionDateTime) BETWEEN :startDate AND :endDate
+    AND  TIMESTAMPDIFF(HOUR, ba.admissionDateTime,
+           COALESCE(ba.dateOfDischarge, NOW())) >= 0
+) t
+GROUP  BY category`,
+                    formulas: ['Stay Hours = TIMESTAMPDIFF(HOUR, admissionDateTime, COALESCE(dateOfDischarge, NOW()))']
                   }} />
                 </div>
                 {admLoading.stayDuration && (
@@ -1829,10 +1983,32 @@ const Dashboard = () => {
                       Weight Gain / Loss Distribution
                       <DebugIcon onClick={setActiveDebugInfo} info={{
                         title: 'Weight Stability Analytics',
-                        sourceTable: 'babyDailyWeight',
-                        appliedLogic: 'Compares birth weight (weightType=1) vs discharge weight (weightType=4) per admission. Gain = discharge > birth, Loss = discharge < birth, Stable = equal.',
-                        formulas: ['Weight Diff = discharge_weight − birth_weight'],
-                        note: 'Only babies with both birth and discharge weights recorded are included. Discharge weight data may be sparse.'
+                        sourceTable: 'babyAdmission, babyDailyWeight',
+                        appliedLogic: 'Compares first birth weight (weightType=1) vs last discharge weight (weightType=4) per admission. Only babies with both weight records are included.',
+                        queryLogic: `SELECT CASE
+         WHEN discharge_wt > birth_wt THEN 'gain'
+         WHEN discharge_wt < birth_wt THEN 'loss'
+         ELSE                              'stable'
+       END AS category,
+       COUNT(*) AS count
+FROM (
+  SELECT ba.id,
+    (SELECT bdw.babyWeight FROM babyDailyWeight bdw
+     WHERE  bdw.babyAdmissionId = ba.id AND bdw.weightType = 1
+     ORDER  BY bdw.id LIMIT 1)      AS birth_wt,
+    (SELECT bdw.babyWeight FROM babyDailyWeight bdw
+     WHERE  bdw.babyAdmissionId = ba.id AND bdw.weightType = 4
+     ORDER  BY bdw.id DESC LIMIT 1) AS discharge_wt
+  FROM   babyAdmission ba
+  JOIN   loungeMaster lm ON ba.loungeId = lm.loungeId
+  WHERE  lm.facilityId IN (:facilityIds)
+    AND  ba.status IN (1, 2)
+    AND  DATE(ba.admissionDateTime) BETWEEN :startDate AND :endDate
+) t
+WHERE  birth_wt IS NOT NULL AND discharge_wt IS NOT NULL
+GROUP  BY category`,
+                        formulas: ['Weight Diff = discharge_wt − birth_wt  →  Gain if > 0, Loss if < 0, Stable if = 0'],
+                        note: 'Only babies with both birth (weightType=1) and discharge (weightType=4) weight records are included.'
                       }} />
                     </div>
                     {admLoading.weightStability ? (
@@ -1912,10 +2088,31 @@ const Dashboard = () => {
                       Exclusive vs Non-Exclusive Breastfeeding
                       <DebugIcon onClick={setActiveDebugInfo} info={{
                         title: 'Breastfeeding Analytics',
-                        sourceTable: 'babyDailyNutrition',
-                        appliedLogic: 'Each baby is classified based on all their nutrition records. Exclusive = only breastfeed methods 1 (Breastfeed) or 2 (Expressed BM) found across all records. Non-Exclusive = any other method code present.',
-                        formulas: ['Exclusive % = (Exclusive / (Exclusive + Non-Exclusive)) × 100'],
-                        note: 'breastFeedMethod stored as JSON array. Babies with no nutrition records are counted separately as No Data.'
+                        sourceTable: 'babyAdmission, babyDailyNutrition',
+                        appliedLogic: 'Each baby classified: Exclusive = only methods 1 or 2 across all records; Non-Exclusive = any method 3–15 found; No Data = no nutrition records. breastFeedMethod stored as JSON array.',
+                        queryLogic: `SELECT CASE
+         WHEN non_excl_count > 0 THEN 'non_exclusive'
+         WHEN record_count   > 0 THEN 'exclusive'
+         ELSE                         'no_data'
+       END AS category,
+       COUNT(*) AS count
+FROM (
+  SELECT ba.id,
+         COUNT(bdn.id) AS record_count,
+         SUM(CASE WHEN JSON_OVERLAPS(
+               bdn.breastFeedMethod,
+               '["3","4","5","6","7","8","9","10","11","12","13","14","15"]')
+             THEN 1 ELSE 0 END) AS non_excl_count
+  FROM   babyAdmission ba
+  JOIN   loungeMaster lm ON ba.loungeId = lm.loungeId
+  LEFT   JOIN babyDailyNutrition bdn ON bdn.babyAdmissionId = ba.id
+  WHERE  lm.facilityId IN (:facilityIds)
+    AND  ba.status IN (1, 2)
+    AND  DATE(ba.admissionDateTime) BETWEEN :startDate AND :endDate
+  GROUP  BY ba.id
+) t
+GROUP  BY category`,
+                        formulas: ['Exclusive % = (Exclusive / (Exclusive + Non-Exclusive)) × 100']
                       }} />
                     </div>
                     {admLoading.breastfeeding ? (
@@ -2037,9 +2234,20 @@ const Dashboard = () => {
                       Daily Attendance Trend
                       <DebugIcon onClick={setActiveDebugInfo} info={{
                         title: 'Nurse Daily Attendance',
-                        sourceTable: 'nurseDutyChange',
-                        appliedLogic: 'A day is counted as "Operational" if at least one nurse (any nurseId) has a record in nurseDutyChange for the selected lounge on that date. Each bar = number of nurses who checked in.',
-                        formulas: ['Attendance % = (Check-In Days / Total Days) × 100'],
+                        sourceTable: 'nurseDutyChange, loungeMaster',
+                        appliedLogic: 'A day is "Operational" if ≥1 nurse has a nurseDutyChange record for the lounge on that date. Each bar = distinct nurses who checked in that day.',
+                        queryLogic: `SELECT DATE_FORMAT(DATE(ndc.addDate), '%Y-%m-%d') AS dt,
+       COUNT(DISTINCT ndc.nurseId) AS nurseCount
+FROM   nurseDutyChange ndc
+JOIN   loungeMaster lm ON ndc.loungeId = lm.loungeId
+WHERE  lm.facilityId IN (:facilityIds)
+  AND  ndc.loungeId  IN (:loungeIds)
+  AND  DATE(ndc.addDate) BETWEEN :startDate AND :endDate
+  AND  ndc.addDate IS NOT NULL
+  AND  ndc.status = 1
+GROUP  BY dt
+ORDER  BY dt`,
+                        formulas: ['Attendance % = (days with ≥1 check-in / total days in range) × 100'],
                       }} />
                     </div>
                     {nurseLoading.loungePerformance ? (
@@ -2091,9 +2299,22 @@ const Dashboard = () => {
                     Individual Nurse Attendance Tracking
                     <DebugIcon onClick={setActiveDebugInfo} info={{
                       title: 'Nurse Attendance Matrix',
-                      sourceTable: 'nurseDutyChange, staffMaster',
-                      appliedLogic: 'Each cell shows whether a nurse (nurseId → staffMaster.name) had at least one check-in on that date for the selected lounge. Multiple check-ins on the same day count as one.',
-                      formulas: ['Present % = (Present Days / Total Days in Range) × 100'],
+                      sourceTable: 'nurseDutyChange, loungeMaster, staffMaster',
+                      appliedLogic: 'Nurse × date grid. Each nurse-day cell = present if ≥1 nurseDutyChange record exists for that nurseId on that date. Multiple check-ins on the same day count as one.',
+                      queryLogic: `SELECT ndc.nurseId,
+       sm.name,
+       DATE_FORMAT(DATE(ndc.addDate), '%Y-%m-%d') AS dt
+FROM   nurseDutyChange ndc
+JOIN   loungeMaster lm ON ndc.loungeId = lm.loungeId
+LEFT   JOIN staffMaster sm ON sm.id = ndc.nurseId
+WHERE  lm.facilityId IN (:facilityIds)
+  AND  ndc.loungeId  IN (:loungeIds)
+  AND  DATE(ndc.addDate) BETWEEN :startDate AND :endDate
+  AND  ndc.addDate IS NOT NULL
+  AND  ndc.status = 1
+GROUP  BY ndc.nurseId, sm.name, dt
+ORDER  BY sm.name, dt`,
+                      formulas: ['Present % = (days present / total days in range) × 100 per nurse'],
                     }} />
                     {nurseMatrix?.nurses?.length > 0 && (
                       <span style={{marginLeft:'8px', fontSize:'11px', fontWeight:500, color:'var(--text-muted)'}}>
@@ -2176,10 +2397,20 @@ const Dashboard = () => {
         </div>
       </div>
 
-      <DebugModal 
-        info={activeDebugInfo} 
-        onClose={() => setActiveDebugInfo(null)} 
-        filters={filtersState} 
+      <DebugModal
+        info={activeDebugInfo}
+        onClose={() => setActiveDebugInfo(null)}
+        filters={filtersState}
+        queryParams={{
+          facilityIds: selectedFacilitiesKey
+            ? selectedFacilitiesKey.split(',').join(', ')
+            : '/* all facilities */',
+          loungeIds: selectedLoungesKey
+            ? selectedLoungesKey.split(',').join(', ')
+            : '/* all lounges */',
+          startDate: `'${startDate}'`,
+          endDate:   `'${endDate}'`,
+        }}
       />
     </div>
   );

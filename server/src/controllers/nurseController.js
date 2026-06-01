@@ -15,10 +15,15 @@ function parseDateRange(query) {
 
 // Build WHERE clause for facility + lounge filter via loungeMaster join
 function buildNurseWhere(facilityIds, loungeIds, startDate, endDate) {
-    const fPh = facilityIds.map(() => '?').join(',');
-    let where  = `lm.facilityId IN (${fPh}) AND DATE(ndc.addDate) BETWEEN ? AND ? AND ndc.addDate IS NOT NULL AND ndc.status = 1`;
-    const params = [...facilityIds, startDate, endDate];
-
+    let where, params;
+    if (facilityIds.length) {
+        const fPh = facilityIds.map(() => '?').join(',');
+        where  = `lm.facilityId IN (${fPh}) AND DATE(ndc.addDate) BETWEEN ? AND ? AND ndc.addDate IS NOT NULL AND ndc.status = 1`;
+        params = [...facilityIds, startDate, endDate];
+    } else {
+        where  = `DATE(ndc.addDate) BETWEEN ? AND ? AND ndc.addDate IS NOT NULL AND ndc.status = 1`;
+        params = [startDate, endDate];
+    }
     if (loungeIds.length) {
         const lPh = loungeIds.map(() => '?').join(',');
         where += ` AND ndc.loungeId IN (${lPh})`;
@@ -35,8 +40,8 @@ exports.getLoungePerformance = async (req, res) => {
     try {
         const { facilityIds: fParam, loungeIds: lParam } = req.query;
         const { startDate, endDate } = parseDateRange(req.query);
-        if (!fParam || !startDate || !endDate)
-            return res.status(400).json({ error: 'facilityIds, startDate, endDate are required' });
+        if (!startDate || !endDate)
+            return res.status(400).json({ error: 'startDate and endDate are required' });
 
         const facilityIds = parseIds(fParam);
         const loungeIds   = parseIds(lParam);
@@ -123,8 +128,8 @@ exports.getAttendanceMatrix = async (req, res) => {
     try {
         const { facilityIds: fParam, loungeIds: lParam } = req.query;
         const { startDate, endDate } = parseDateRange(req.query);
-        if (!fParam || !startDate || !endDate)
-            return res.status(400).json({ error: 'facilityIds, startDate, endDate are required' });
+        if (!startDate || !endDate)
+            return res.status(400).json({ error: 'startDate and endDate are required' });
 
         const facilityIds = parseIds(fParam);
         const loungeIds   = parseIds(lParam);

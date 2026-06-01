@@ -66,18 +66,19 @@ exports.getLoungesByFacility = async (req, res) => {
 
 // ── Multi-ID endpoints (used by multi-select filters) ─────────────────────────
 
-// GET /api/v1/locations/districts?stateIds=9,27
+// GET /api/v1/locations/districts?stateIds=9,27  (omit stateIds for all districts)
 exports.getDistrictsByStates = async (req, res) => {
     try {
         const ids = parseIds(req.query.stateIds);
-        if (!ids.length) return res.status(400).json({ error: 'stateIds required' });
-        const ph = ids.map(() => '?').join(',');
-        const [rows] = await pool.query(
-            `SELECT priDistrictCode AS id, districtNameProperCase AS name
-             FROM priDistricts WHERE StateCode IN (${ph})
-             ORDER BY districtNameProperCase ASC`,
-            ids
-        );
+        let sql = 'SELECT priDistrictCode AS id, districtNameProperCase AS name FROM priDistricts';
+        let params = [];
+        if (ids.length) {
+            const ph = ids.map(() => '?').join(',');
+            sql += ` WHERE StateCode IN (${ph})`;
+            params = ids;
+        }
+        sql += ' ORDER BY districtNameProperCase ASC';
+        const [rows] = await pool.query(sql, params);
         res.json(rows.map(r => ({ ...r, name: toTitleCase(r.name) })));
     } catch (err) {
         console.error(err);
@@ -85,18 +86,19 @@ exports.getDistrictsByStates = async (req, res) => {
     }
 };
 
-// GET /api/v1/locations/facilities?districtIds=136,137
+// GET /api/v1/locations/facilities?districtIds=136,137  (omit districtIds for all facilities)
 exports.getFacilitiesByDistricts = async (req, res) => {
     try {
         const ids = parseIds(req.query.districtIds);
-        if (!ids.length) return res.status(400).json({ error: 'districtIds required' });
-        const ph = ids.map(() => '?').join(',');
-        const [rows] = await pool.query(
-            `SELECT FacilityID AS id, FacilityName AS name
-             FROM facilitylist WHERE PRIDistrictCode IN (${ph})
-             ORDER BY FacilityName ASC LIMIT 200`,
-            ids
-        );
+        let sql = 'SELECT FacilityID AS id, FacilityName AS name FROM facilitylist WHERE Status = 1';
+        let params = [];
+        if (ids.length) {
+            const ph = ids.map(() => '?').join(',');
+            sql += ` AND PRIDistrictCode IN (${ph})`;
+            params = ids;
+        }
+        sql += ' ORDER BY FacilityName ASC LIMIT 500';
+        const [rows] = await pool.query(sql, params);
         res.json(rows);
     } catch (err) {
         console.error(err);
@@ -104,18 +106,19 @@ exports.getFacilitiesByDistricts = async (req, res) => {
     }
 };
 
-// GET /api/v1/locations/lounges?facilityIds=228,229
+// GET /api/v1/locations/lounges?facilityIds=228,229  (omit facilityIds for all lounges)
 exports.getLoungesByFacilities = async (req, res) => {
     try {
         const ids = parseIds(req.query.facilityIds);
-        if (!ids.length) return res.status(400).json({ error: 'facilityIds required' });
-        const ph = ids.map(() => '?').join(',');
-        const [rows] = await pool.query(
-            `SELECT loungeId AS id, loungeName AS name
-             FROM loungeMaster WHERE facilityId IN (${ph})
-             ORDER BY loungeName ASC`,
-            ids
-        );
+        let sql = 'SELECT loungeId AS id, loungeName AS name FROM loungeMaster WHERE status = 1';
+        let params = [];
+        if (ids.length) {
+            const ph = ids.map(() => '?').join(',');
+            sql += ` AND facilityId IN (${ph})`;
+            params = ids;
+        }
+        sql += ' ORDER BY loungeName ASC LIMIT 500';
+        const [rows] = await pool.query(sql, params);
         res.json(rows);
     } catch (err) {
         console.error(err);

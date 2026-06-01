@@ -40,20 +40,20 @@ export const fetchStates = createAsyncThunk('filters/fetchStates', async () => {
   return res.data;
 });
 
-export const fetchDistricts = createAsyncThunk('filters/fetchDistricts', async (stateIds) => {
-  const ids = Array.isArray(stateIds) ? stateIds.join(',') : stateIds;
+export const fetchDistricts = createAsyncThunk('filters/fetchDistricts', async (stateIds = []) => {
+  const ids = Array.isArray(stateIds) ? stateIds.join(',') : (stateIds || '');
   const res = await axios.get(`${API_URL}/v1/locations/districts?stateIds=${ids}`);
   return res.data;
 });
 
-export const fetchFacilities = createAsyncThunk('filters/fetchFacilities', async (districtIds) => {
-  const ids = Array.isArray(districtIds) ? districtIds.join(',') : districtIds;
+export const fetchFacilities = createAsyncThunk('filters/fetchFacilities', async (districtIds = []) => {
+  const ids = Array.isArray(districtIds) ? districtIds.join(',') : (districtIds || '');
   const res = await axios.get(`${API_URL}/v1/locations/facilities?districtIds=${ids}`);
   return res.data;
 });
 
-export const fetchLounges = createAsyncThunk('filters/fetchLounges', async (facilityIds) => {
-  const ids = Array.isArray(facilityIds) ? facilityIds.join(',') : facilityIds;
+export const fetchLounges = createAsyncThunk('filters/fetchLounges', async (facilityIds = []) => {
+  const ids = Array.isArray(facilityIds) ? facilityIds.join(',') : (facilityIds || '');
   const res = await axios.get(`${API_URL}/v1/locations/lounges?facilityIds=${ids}`);
   return res.data;
 });

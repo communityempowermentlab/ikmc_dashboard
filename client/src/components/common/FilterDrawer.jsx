@@ -78,41 +78,47 @@ const FilterDrawer = ({ isOpen, onClose }) => {
   const [draftStartDate,  setDraftStartDate]  = useState('');
   const [draftEndDate,    setDraftEndDate]    = useState('');
 
-  // Sync draft when drawer opens
+  // Sync draft when drawer opens; reload child options relative to current selections
   useEffect(() => {
-    if (isOpen) {
-      setDraftStates(selectedStates);
-      setDraftDistricts(selectedDistricts);
-      setDraftFacilities(selectedFacilities);
-      setDraftLounges(selectedLounges);
-      setDraftStartDate(startDate);
-      setDraftEndDate(endDate);
+    if (!isOpen) return;
+    setDraftStates(selectedStates);
+    setDraftDistricts(selectedDistricts);
+    setDraftFacilities(selectedFacilities);
+    setDraftLounges(selectedLounges);
+    setDraftStartDate(startDate);
+    setDraftEndDate(endDate);
 
-      if (selectedStates.length)     dispatch(fetchDistricts(selectedStates));
-      if (selectedDistricts.length)  dispatch(fetchFacilities(selectedDistricts));
-      if (selectedFacilities.length) dispatch(fetchLounges(selectedFacilities));
-    }
+    // Reload options scoped to current selections (empty = all)
+    dispatch(fetchDistricts(selectedStates));
+    dispatch(fetchFacilities(selectedDistricts));
+    dispatch(fetchLounges(selectedFacilities));
   }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Cascade handlers ───────────────────────────────────────────────────────
 
   const handleStatesChange = (vals) => {
     setDraftStates(vals);
     setDraftDistricts([]);
     setDraftFacilities([]);
     setDraftLounges([]);
-    if (vals.length) dispatch(fetchDistricts(vals));
+    // Empty vals → fetch all districts; non-empty → fetch filtered
+    dispatch(fetchDistricts(vals));
+    dispatch(fetchFacilities([]));
+    dispatch(fetchLounges([]));
   };
 
   const handleDistrictsChange = (vals) => {
     setDraftDistricts(vals);
     setDraftFacilities([]);
     setDraftLounges([]);
-    if (vals.length) dispatch(fetchFacilities(vals));
+    dispatch(fetchFacilities(vals));
+    dispatch(fetchLounges([]));
   };
 
   const handleFacilitiesChange = (vals) => {
     setDraftFacilities(vals);
     setDraftLounges([]);
-    if (vals.length) dispatch(fetchLounges(vals));
+    dispatch(fetchLounges(vals));
   };
 
   const handleReset = () => {
@@ -122,6 +128,10 @@ const FilterDrawer = ({ isOpen, onClose }) => {
     setDraftLounges([]);
     setDraftStartDate(earliestDate || startDate);
     setDraftEndDate(todayStr());
+    // Reload all unfiltered options
+    dispatch(fetchDistricts([]));
+    dispatch(fetchFacilities([]));
+    dispatch(fetchLounges([]));
   };
 
   const handleApply = () => {
@@ -149,6 +159,7 @@ const FilterDrawer = ({ isOpen, onClose }) => {
         </div>
 
         <div className="filter-drawer-body">
+          {/* No disabled constraints — all levels always accessible */}
           <SearchableSelect
             id="draft-sel-state"
             label="State"
@@ -167,7 +178,6 @@ const FilterDrawer = ({ isOpen, onClose }) => {
             options={districts}
             value={draftDistricts}
             onChange={handleDistrictsChange}
-            disabled={!draftStates.length}
             loading={loading.districts}
             multiSelect
             pluralLabel="Districts"
@@ -179,7 +189,6 @@ const FilterDrawer = ({ isOpen, onClose }) => {
             options={facilities}
             value={draftFacilities}
             onChange={handleFacilitiesChange}
-            disabled={!draftDistricts.length}
             loading={loading.facilities}
             multiSelect
             pluralLabel="Facilities"
@@ -191,7 +200,6 @@ const FilterDrawer = ({ isOpen, onClose }) => {
             options={lounges}
             value={draftLounges}
             onChange={(vals) => setDraftLounges(vals)}
-            disabled={!draftFacilities.length}
             loading={loading.lounges}
             multiSelect
             pluralLabel="Lounges"

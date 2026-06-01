@@ -94,6 +94,43 @@
   line-height: 1.5;
 }
 
+.debug-section-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.debug-section-title-row h3 {
+  margin: 0;
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.debug-copy-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 5px;
+  border: 1px solid rgba(255,255,255,0.18);
+  background: rgba(255,255,255,0.08);
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+}
+.debug-copy-btn:hover {
+  background: rgba(99,102,241,0.18);
+  color: #a5b4fc;
+  border-color: rgba(99,102,241,0.4);
+}
+.debug-copy-btn:active {
+  background: rgba(99,102,241,0.3);
+}
+
 .debug-code-block {
   background: #1e293b;
   color: #f8fafc;

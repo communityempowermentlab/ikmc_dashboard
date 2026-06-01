@@ -7,6 +7,7 @@ function parseIds(raw) {
 }
 
 function buildFacilityClause(facilityIds) {
+    if (!facilityIds.length) return { clause: '1=1', params: [] };
     const ph = facilityIds.map(() => '?').join(',');
     return { clause: `lm.facilityId IN (${ph})`, params: facilityIds };
 }
@@ -62,8 +63,8 @@ exports.getAdmissionKpi = async (req, res) => {
     try {
         const { facilityIds: fParam, loungeIds: lParam } = req.query;
         const { startDate, endDate } = parseDateRange(req.query);
-        if (!fParam || !startDate || !endDate)
-            return res.status(400).json({ error: 'facilityIds, startDate, endDate are required' });
+        if (!startDate || !endDate)
+            return res.status(400).json({ error: 'startDate and endDate are required' });
 
         const facilityIds = parseIds(fParam);
         const loungeIds   = parseIds(lParam);
@@ -116,8 +117,8 @@ exports.getAdmissionTrend = async (req, res) => {
     try {
         const { facilityIds: fParam, loungeIds: lParam } = req.query;
         const { startDate, endDate } = parseDateRange(req.query);
-        if (!fParam || !startDate || !endDate)
-            return res.status(400).json({ error: 'facilityIds, startDate, endDate are required' });
+        if (!startDate || !endDate)
+            return res.status(400).json({ error: 'startDate and endDate are required' });
 
         const facilityIds = parseIds(fParam);
         const loungeIds   = parseIds(lParam);
@@ -150,8 +151,8 @@ exports.getAdmissionComposition = async (req, res) => {
     try {
         const { facilityIds: fParam, loungeIds: lParam } = req.query;
         const { startDate, endDate } = parseDateRange(req.query);
-        if (!fParam || !startDate || !endDate)
-            return res.status(400).json({ error: 'facilityIds, startDate, endDate are required' });
+        if (!startDate || !endDate)
+            return res.status(400).json({ error: 'startDate and endDate are required' });
 
         const facilityIds = parseIds(fParam);
         const loungeIds   = parseIds(lParam);
@@ -187,8 +188,8 @@ exports.getAdmissionDischarge = async (req, res) => {
     try {
         const { facilityIds: fParam, loungeIds: lParam } = req.query;
         const { startDate, endDate } = parseDateRange(req.query);
-        if (!fParam || !startDate || !endDate)
-            return res.status(400).json({ error: 'facilityIds, startDate, endDate are required' });
+        if (!startDate || !endDate)
+            return res.status(400).json({ error: 'startDate and endDate are required' });
 
         const facilityIds = parseIds(fParam);
         const loungeIds   = parseIds(lParam);
@@ -249,8 +250,8 @@ exports.getAdmissionBirthWeight = async (req, res) => {
     try {
         const { facilityIds: fParam, loungeIds: lParam } = req.query;
         const { startDate, endDate } = parseDateRange(req.query);
-        if (!fParam || !startDate || !endDate)
-            return res.status(400).json({ error: 'facilityIds, startDate, endDate are required' });
+        if (!startDate || !endDate)
+            return res.status(400).json({ error: 'startDate and endDate are required' });
 
         const facilityIds = parseIds(fParam);
         const loungeIds   = parseIds(lParam);
@@ -298,8 +299,8 @@ exports.getEarlyCareKpi = async (req, res) => {
     try {
         const { facilityIds: fParam, loungeIds: lParam } = req.query;
         const { startDate, endDate } = parseDateRange(req.query);
-        if (!fParam || !startDate || !endDate)
-            return res.status(400).json({ error: 'facilityIds, startDate, endDate are required' });
+        if (!startDate || !endDate)
+            return res.status(400).json({ error: 'startDate and endDate are required' });
 
         const facilityIds = parseIds(fParam);
         const loungeIds   = parseIds(lParam);
@@ -364,8 +365,8 @@ exports.getTransportKpi = async (req, res) => {
     try {
         const { facilityIds: fParam, loungeIds: lParam } = req.query;
         const { startDate, endDate } = parseDateRange(req.query);
-        if (!fParam || !startDate || !endDate)
-            return res.status(400).json({ error: 'facilityIds, startDate, endDate are required' });
+        if (!startDate || !endDate)
+            return res.status(400).json({ error: 'startDate and endDate are required' });
 
         const facilityIds = parseIds(fParam);
         const loungeIds   = parseIds(lParam);
@@ -424,8 +425,8 @@ exports.getKmcDurationTrend = async (req, res) => {
     try {
         const { facilityIds: fParam, loungeIds: lParam } = req.query;
         const { startDate, endDate } = parseDateRange(req.query);
-        if (!fParam || !startDate || !endDate)
-            return res.status(400).json({ error: 'facilityIds, startDate, endDate are required' });
+        if (!startDate || !endDate)
+            return res.status(400).json({ error: 'startDate and endDate are required' });
 
         const facilityIds = parseIds(fParam);
         const loungeIds   = parseIds(lParam);
@@ -478,8 +479,8 @@ exports.getSummaryTable = async (req, res) => {
     try {
         const { facilityIds: fParam, loungeIds: lParam } = req.query;
         const { startDate, endDate } = parseDateRange(req.query);
-        if (!fParam || !startDate || !endDate)
-            return res.status(400).json({ error: 'facilityIds, startDate, endDate are required' });
+        if (!startDate || !endDate)
+            return res.status(400).json({ error: 'startDate and endDate are required' });
 
         const facilityIds = parseIds(fParam);
         const loungeIds   = parseIds(lParam);
@@ -617,8 +618,8 @@ exports.getGenderComposition = async (req, res) => {
     try {
         const { facilityIds: fParam, loungeIds: lParam } = req.query;
         const { startDate, endDate } = parseDateRange(req.query);
-        if (!fParam || !startDate || !endDate)
-            return res.status(400).json({ error: 'facilityIds, startDate, endDate are required' });
+        if (!startDate || !endDate)
+            return res.status(400).json({ error: 'startDate and endDate are required' });
 
         const facilityIds = parseIds(fParam);
         const loungeIds   = parseIds(lParam);
@@ -676,8 +677,8 @@ exports.getStayDuration = async (req, res) => {
     try {
         const { facilityIds: fParam, loungeIds: lParam } = req.query;
         const { startDate, endDate } = parseDateRange(req.query);
-        if (!fParam || !startDate || !endDate)
-            return res.status(400).json({ error: 'facilityIds, startDate, endDate are required' });
+        if (!startDate || !endDate)
+            return res.status(400).json({ error: 'startDate and endDate are required' });
 
         const facilityIds = parseIds(fParam);
         const loungeIds   = parseIds(lParam);
@@ -742,8 +743,8 @@ exports.getWeightStability = async (req, res) => {
     try {
         const { facilityIds: fParam, loungeIds: lParam } = req.query;
         const { startDate, endDate } = parseDateRange(req.query);
-        if (!fParam || !startDate || !endDate)
-            return res.status(400).json({ error: 'facilityIds, startDate, endDate are required' });
+        if (!startDate || !endDate)
+            return res.status(400).json({ error: 'startDate and endDate are required' });
 
         const facilityIds = parseIds(fParam);
         const loungeIds   = parseIds(lParam);
@@ -825,8 +826,8 @@ exports.getBreastfeeding = async (req, res) => {
     try {
         const { facilityIds: fParam, loungeIds: lParam } = req.query;
         const { startDate, endDate } = parseDateRange(req.query);
-        if (!fParam || !startDate || !endDate)
-            return res.status(400).json({ error: 'facilityIds, startDate, endDate are required' });
+        if (!startDate || !endDate)
+            return res.status(400).json({ error: 'startDate and endDate are required' });
 
         const facilityIds = parseIds(fParam);
         const loungeIds   = parseIds(lParam);

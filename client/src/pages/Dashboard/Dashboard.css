@@ -80,7 +80,7 @@
   flex-shrink: 0;
 }
 
-.dashboard-container .header-title { font-size: 16px; font-weight: 600; color: var(--text-primary); }
+.dashboard-container .header-title { font-size: 20px; font-weight: 700; color: var(--text-primary); }
 .dashboard-container .header-sub { font-size: 13px; color: var(--text-muted); margin-top: 1px; }
 .dashboard-container .header-right { display: flex; align-items: center; gap: 10px; }
 
@@ -264,6 +264,7 @@
 .dashboard-container .card-title {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   font-size: 16px;
   font-weight: 600;
   color: var(--text-primary);
@@ -293,7 +294,7 @@
 .dashboard-container .kpi.green::before { background: var(--green-bar); }
 .dashboard-container .kpi.amber::before { background: var(--amber-bar); }
 .dashboard-container .kpi.red::before { background: var(--red-bar); }
-.dashboard-container .kpi-label { font-size: 13px; color: var(--text-secondary); line-height: 1.3; margin-bottom: 8px; display: flex; align-items: center; }
+.dashboard-container .kpi-label { font-size: 13px; color: var(--text-secondary); line-height: 1.3; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; }
 .dashboard-container .kpi-val { font-size: 24px; font-weight: 600; color: var(--text-primary); line-height: 1; font-family: var(--mono); }
 .dashboard-container .kpi-trend {
   font-size: 12.5px;

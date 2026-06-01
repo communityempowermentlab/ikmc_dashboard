@@ -5,12 +5,20 @@ import {
   fetchDistrictFilters,
   fetchDistrictKpis,
   fetchFacilityMatrix,
+  fetchWeeklyInsights,
 } from '../../redux/slices/districtSlice';
+import DebugIcon from '../../components/common/DebugIcon';
+import DebugModal from '../../components/common/DebugModal';
+import SearchableSelect from '../../components/common/SearchableSelect';
 import './DistrictDashboard.css';
+
+const MAX_RANGE_DAYS = 7;
 
 const DAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 const toTitleCase = s => s.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+
+const fmtDDMMYYYY = s => (s ? `${s.slice(8)}-${s.slice(5, 7)}-${s.slice(0, 4)}` : '');
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
@@ -30,7 +38,7 @@ function computeInsights(mat, kpis) {
   // Overall app use sentiment
   insights.push({
     type: kpis.appUsePct >= 70 ? 'positive' : kpis.appUsePct >= 40 ? 'warning' : 'critical',
-    text: `Overall iKMC app usage is ${kpis.appUsePct}% — ${kpis.appUseDays} of ${kpis.possibleFacDays} possible facility-days had activity.`,
+    text: `Daily app compliance: ${kpis.appUsePct}% — ${kpis.appUseFacilities} of ${kpis.totalFacilities} facilities checked in every day of the ${kpis.totalDays}-day range.`,
   });
 
   // Best performing facility
@@ -110,49 +118,196 @@ function computeInsights(mat, kpis) {
 // ── Main component ─────────────────────────────────────────────────────────
 export default function DistrictDashboard() {
   const dispatch = useDispatch();
-  const { filterOptions, kpis, matrix, loading } = useSelector(s => s.district);
+  const { filterOptions, kpis, matrix, weeklyInsights, insightsError, loading } = useSelector(s => s.district);
 
-  // Independent local filter state — does NOT share with main dashboard
-  const [stateId,        setStateId]        = useState('');
-  const [districtCode,   setDistrictCode]   = useState('');
-  const [facilityTypeId, setFacilityTypeId] = useState('');
-  const [facilityId,     setFacilityId]     = useState('');
+  // Independent local filter state (arrays = multi-select) — does NOT share with main dashboard
+  const [selStateIds,    setSelStateIds]    = useState([]);
+  const [selDistrictIds, setSelDistrictIds] = useState([]);
+  const [selTypeIds,     setSelTypeIds]     = useState([]);
+  const [selFacilityIds, setSelFacilityIds] = useState([]);
   const [startDate,      setStartDate]      = useState(sevenDaysAgoStr());
   const [endDate,        setEndDate]        = useState(todayStr());
+  const [filtersReady,   setFiltersReady]   = useState(false);
+  const [dateError,      setDateError]      = useState(null);
 
   const [dismissedInsights, setDismissedInsights] = useState(new Set());
+  const [activeDebugInfo,   setActiveDebugInfo]   = useState(null);
 
   useEffect(() => {
     dispatch(fetchDistrictFilters());
   }, [dispatch]);
 
+  // Auto-select ALL options when filterOptions loads for the first time
+  useEffect(() => {
+    if (!filterOptions || filtersReady) return;
+    setSelStateIds(   filterOptions.states?.map(s => s.id)         || []);
+    setSelDistrictIds(filterOptions.districts?.map(d => d.id)      || []);
+    setSelTypeIds(    filterOptions.facilityTypes?.map(t => t.id)  || []);
+    setSelFacilityIds(filterOptions.facilities?.map(f => f.id)     || []);
+    setFiltersReady(true);
+  }, [filterOptions, filtersReady]);
+
+  // Pass empty string when ALL options selected → server applies no filter (= all data)
   const fetchData = useCallback(() => {
-    const args = { stateId, districtCode, facilityTypeId, facilityId, startDate, endDate };
+    const allStates     = filterOptions?.states?.length         || 0;
+    const allDistricts  = filterOptions?.districts?.length      || 0;
+    const allTypes      = filterOptions?.facilityTypes?.length  || 0;
+    const allFacilities = filterOptions?.facilities?.length     || 0;
+    const args = {
+      stateId:        selStateIds.length    === allStates     ? '' : selStateIds.join(','),
+      districtCode:   selDistrictIds.length === allDistricts  ? '' : selDistrictIds.join(','),
+      facilityTypeId: selTypeIds.length     === allTypes      ? '' : selTypeIds.join(','),
+      facilityId:     selFacilityIds.length === allFacilities ? '' : selFacilityIds.join(','),
+      startDate,
+      endDate,
+    };
     dispatch(fetchDistrictKpis(args));
     dispatch(fetchFacilityMatrix(args));
-  }, [stateId, districtCode, facilityTypeId, facilityId, startDate, endDate, dispatch]);
+  }, [selStateIds, selDistrictIds, selTypeIds, selFacilityIds, startDate, endDate, dispatch, filterOptions]);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    if (filtersReady) fetchData();
+  }, [fetchData, filtersReady]);
 
   // Reset dismissed when data refreshes
   useEffect(() => {
     setDismissedInsights(new Set());
   }, [matrix, kpis]);
 
-  // Cascaded filter options — all client-side, no shared Redux state
+  // Generate Hindi insights via Gemini once both KPIs and matrix are loaded
+  useEffect(() => {
+    if (!kpis?.kpis || !matrix?.facilities?.length) return;
+    dispatch(fetchWeeklyInsights({
+      kpis:       kpis.kpis,
+      facilities: matrix.facilities,
+      period:     kpis.period,
+    }));
+  }, [kpis, matrix, dispatch]);
+
+  // ── Cascaded filter options (client-side, all pre-loaded) ──────────────────
   const stateOptions = filterOptions?.states || [];
-  const districtOptions = (filterOptions?.districts || []).filter(
-    d => !stateId || String(d.stateId) === String(stateId)
-  );
-  const typeOptions = filterOptions?.facilityTypes || [];
-  const facilityOptions = (filterOptions?.facilities || []).filter(
-    f =>
-      (!stateId        || String(f.stateId)        === String(stateId)) &&
-      (!districtCode   || String(f.districtCode)   === String(districtCode)) &&
-      (!facilityTypeId || String(f.facilityTypeId) === String(facilityTypeId))
-  );
+  const typeOptions  = filterOptions?.facilityTypes || [];
+
+  // Districts: filtered to selected states; if all states selected, show all
+  const districtOptions = useMemo(() => {
+    const all = filterOptions?.districts || [];
+    const allStates = filterOptions?.states || [];
+    if (!selStateIds.length || selStateIds.length === allStates.length) return all;
+    const set = new Set(selStateIds.map(String));
+    return all.filter(d => set.has(String(d.stateId)));
+  }, [filterOptions, selStateIds]);
+
+  // Facilities: filtered by states, districts, AND types
+  const facilityOptions = useMemo(() => {
+    const all           = filterOptions?.facilities    || [];
+    const allStates     = filterOptions?.states        || [];
+    const allDistricts  = filterOptions?.districts     || [];
+    const allTypes      = filterOptions?.facilityTypes || [];
+    const stateSet = new Set(selStateIds.map(String));
+    const distSet  = new Set(selDistrictIds.map(String));
+    const typeSet  = new Set(selTypeIds.map(String));
+    return all.filter(f =>
+      (selStateIds.length    === allStates.length    || stateSet.has(String(f.stateId)))      &&
+      (selDistrictIds.length === allDistricts.length || distSet.has(String(f.districtCode)))  &&
+      (selTypeIds.length     === allTypes.length     || typeSet.has(String(f.facilityTypeId)))
+    );
+  }, [filterOptions, selStateIds, selDistrictIds, selTypeIds]);
+
+  // ── Cascade handlers: auto-select all valid children when parent changes ───
+  const handleStatesChange = (vals) => {
+    setSelStateIds(vals);
+    const allDistricts  = filterOptions?.districts  || [];
+    const allFacilities = filterOptions?.facilities || [];
+    const allStates     = filterOptions?.states     || [];
+    if (!vals.length || vals.length === allStates.length) {
+      // All / none → select all children
+      setSelDistrictIds(allDistricts.map(d => d.id));
+      setSelFacilityIds(allFacilities.map(f => f.id));
+    } else {
+      const set = new Set(vals.map(String));
+      const validDists = allDistricts.filter(d => set.has(String(d.stateId)));
+      setSelDistrictIds(validDists.map(d => d.id));
+      const validDistSet = new Set(validDists.map(d => String(d.id)));
+      setSelFacilityIds(allFacilities.filter(f =>
+        set.has(String(f.stateId)) && validDistSet.has(String(f.districtCode))
+      ).map(f => f.id));
+    }
+  };
+
+  const handleDistrictsChange = (vals) => {
+    setSelDistrictIds(vals);
+    const allFacilities = filterOptions?.facilities || [];
+    const allDistricts  = filterOptions?.districts  || [];
+    if (!vals.length || vals.length === allDistricts.length) {
+      setSelFacilityIds(allFacilities.map(f => f.id));
+    } else {
+      const set = new Set(vals.map(String));
+      setSelFacilityIds(allFacilities.filter(f => set.has(String(f.districtCode))).map(f => f.id));
+    }
+  };
+
+  const handleTypesChange = (vals) => {
+    setSelTypeIds(vals);
+    const allFacilities = filterOptions?.facilities    || [];
+    const allTypes      = filterOptions?.facilityTypes || [];
+    if (!vals.length || vals.length === allTypes.length) {
+      setSelFacilityIds(allFacilities.map(f => f.id));
+    } else {
+      const set = new Set(vals.map(String));
+      setSelFacilityIds(allFacilities.filter(f => set.has(String(f.facilityTypeId))).map(f => f.id));
+    }
+  };
+
+  // ── Debug filter summary ───────────────────────────────────────────────────
+  const debugFilterRows = useMemo(() => {
+    const names = (ids, opts) =>
+      ids.length
+        ? ids.map(id => opts.find(o => String(o.id) === String(id))?.name || id).join(', ')
+        : 'All';
+    return [
+      { label: 'State',         value: names(selStateIds,    stateOptions) },
+      { label: 'District',      value: names(selDistrictIds, districtOptions) },
+      { label: 'Facility Type', value: names(selTypeIds,     typeOptions) },
+      { label: 'Facility',      value: names(selFacilityIds, facilityOptions) },
+      { label: 'Date Range',    value: `${fmtDDMMYYYY(startDate)} to ${fmtDDMMYYYY(endDate)}` },
+    ];
+  }, [selStateIds, selDistrictIds, selTypeIds, selFacilityIds, startDate, endDate,
+      stateOptions, districtOptions, typeOptions, facilityOptions]);
+
+  // Pure UTC date arithmetic — avoids timezone-shift when converting back to ISO string
+  const utcDaysBetween = (a, b) => {
+    const [ay, am, ad] = a.split('-').map(Number);
+    const [by, bm, bd] = b.split('-').map(Number);
+    return Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / 86400000);
+  };
+  const utcAddDays = (dateStr, days) => {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+  };
+
+  // ── 7-day range handlers ───────────────────────────────────────────────────
+  // Inclusive count: 12-May → 18-May = 7 days (diff of 6 between endpoints)
+  const handleStartDateChange = (val) => {
+    const diff = utcDaysBetween(val, endDate);
+    if (diff > MAX_RANGE_DAYS - 1) {
+      setEndDate(utcAddDays(val, MAX_RANGE_DAYS - 1));
+      setDateError(`Range auto-capped to ${MAX_RANGE_DAYS} days.`);
+    } else {
+      setDateError(null);
+    }
+    setStartDate(val);
+  };
+
+  const handleEndDateChange = (val) => {
+    const diff = utcDaysBetween(startDate, val);
+    if (diff > MAX_RANGE_DAYS - 1) {
+      setStartDate(utcAddDays(val, -(MAX_RANGE_DAYS - 1)));
+      setDateError(`Range auto-capped to ${MAX_RANGE_DAYS} days.`);
+    } else {
+      setDateError(null);
+    }
+    setEndDate(val);
+  };
 
   const k   = kpis?.kpis   || {};
   const mat = matrix        || { facilities: [], dates: [] };
@@ -179,7 +334,7 @@ export default function DistrictDashboard() {
             <h1 className="dd-title">District Weekly Performance</h1>
             <p className="dd-subtitle">
               {kpis?.period
-                ? `${kpis.period.start} — ${kpis.period.end} · ${kpis.period.totalDays} days`
+                ? `${fmtDDMMYYYY(kpis.period.start)} — ${fmtDDMMYYYY(kpis.period.end)} · ${kpis.period.totalDays} days`
                 : 'Facility-level iKMC monitoring dashboard'}
             </p>
           </div>
@@ -197,50 +352,70 @@ export default function DistrictDashboard() {
         </div>
       </header>
 
+      {/* ── Print-only filter summary (hidden on screen, visible in PDF) ────── */}
+      <div className="dd-print-filters">
+        <div className="dd-print-filters-grid">
+          {debugFilterRows.map(({ label, value }) => (
+            <div key={label} className="dd-print-filter-item">
+              <span className="dd-print-filter-label">{label}</span>
+              <span className="dd-print-filter-value">{value}</span>
+            </div>
+          ))}
+        </div>
+        <div className="dd-print-meta">
+          <span>iKMC Programme — District Weekly Performance Dashboard</span>
+          <span>Printed: {new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</span>
+        </div>
+      </div>
+
       {/* ── Filter Bar ─────────────────────────────────────────────────────── */}
       <div className="dd-filter-bar">
         <FilterGroup label="State">
-          <select
-            className="dd-select"
-            value={stateId}
-            onChange={e => { setStateId(e.target.value); setDistrictCode(''); setFacilityId(''); }}
-          >
-            <option value="">All States</option>
-            {stateOptions.map(s => <option key={s.id} value={s.id}>{toTitleCase(s.name)}</option>)}
-          </select>
+          <SearchableSelect
+            id="dd-sel-state"
+            placeholder="All States"
+            options={stateOptions}
+            value={selStateIds}
+            onChange={handleStatesChange}
+            multiSelect
+            pluralLabel="States"
+          />
         </FilterGroup>
 
         <FilterGroup label="District">
-          <select
-            className="dd-select"
-            value={districtCode}
-            onChange={e => { setDistrictCode(e.target.value); setFacilityId(''); }}
-          >
-            <option value="">All Districts</option>
-            {districtOptions.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
+          <SearchableSelect
+            id="dd-sel-district"
+            placeholder="All Districts"
+            options={districtOptions}
+            value={selDistrictIds}
+            onChange={handleDistrictsChange}
+            multiSelect
+            pluralLabel="Districts"
+          />
         </FilterGroup>
 
         <FilterGroup label="Facility Type">
-          <select
-            className="dd-select"
-            value={facilityTypeId}
-            onChange={e => { setFacilityTypeId(e.target.value); setFacilityId(''); }}
-          >
-            <option value="">All Types</option>
-            {typeOptions.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select>
+          <SearchableSelect
+            id="dd-sel-type"
+            placeholder="All Types"
+            options={typeOptions}
+            value={selTypeIds}
+            onChange={handleTypesChange}
+            multiSelect
+            pluralLabel="Types"
+          />
         </FilterGroup>
 
         <FilterGroup label="Facility">
-          <select
-            className="dd-select"
-            value={facilityId}
-            onChange={e => setFacilityId(e.target.value)}
-          >
-            <option value="">All Facilities</option>
-            {facilityOptions.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
-          </select>
+          <SearchableSelect
+            id="dd-sel-facility"
+            placeholder="All Facilities"
+            options={facilityOptions}
+            value={selFacilityIds}
+            onChange={setSelFacilityIds}
+            multiSelect
+            pluralLabel="Facilities"
+          />
         </FilterGroup>
 
         <FilterGroup label="From">
@@ -249,7 +424,7 @@ export default function DistrictDashboard() {
             className="dd-date-input"
             value={startDate}
             max={endDate}
-            onChange={e => setStartDate(e.target.value)}
+            onChange={e => handleStartDateChange(e.target.value)}
           />
         </FilterGroup>
 
@@ -260,40 +435,267 @@ export default function DistrictDashboard() {
             value={endDate}
             min={startDate}
             max={todayStr()}
-            onChange={e => setEndDate(e.target.value)}
+            onChange={e => handleEndDateChange(e.target.value)}
           />
         </FilterGroup>
+
+        {dateError && (
+          <div className="dd-date-error">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            {dateError}
+          </div>
+        )}
       </div>
 
       <div className="dd-body">
 
         {/* ── KPI Cards ───────────────────────────────────────────────────── */}
         <section className="dd-kpi-section">
-          <KpiCard label="iKMC Facilities"  value={k.totalFacilities ?? '—'} unit="total"           accent="#6366f1" loading={loading.kpis} />
-          <KpiCard label="Daily App Use"   value={k.appUsePct != null ? `${k.appUsePct}%` : '—'}
-                   sub={`${k.appUseDays ?? 0} / ${k.possibleFacDays ?? 0} facility-days`}
-                   accent="#0ea5e9" loading={loading.kpis} />
-          <KpiCard label="Total Babies"    value={k.totalBaby ?? '—'}      unit="admissions"       accent="#8b5cf6" loading={loading.kpis} />
-          <KpiCard label="LBW Admitted"    value={k.lbwAdmitted ?? '—'}    unit="LBW babies"       accent="#f59e0b" loading={loading.kpis} />
-          <KpiCard label="LBW Discharged"  value={k.lbwDischarged ?? '—'}  unit="LBW babies"       accent="#10b981" loading={loading.kpis} />
-          <KpiCard label="48h Stay"        value={k.stay48 ?? '—'}         unit="babies stayed ≥48h" accent="#3b82f6" loading={loading.kpis} />
+          <KpiCard label="iKMC Facilities" value={k.totalFacilities ?? '—'} unit="total" accent="#6366f1" loading={loading.kpis}
+            onDebug={setActiveDebugInfo} debugInfo={{
+              title: 'iKMC Facilities',
+              sourceTable: 'loungeMaster, facilitylist',
+              appliedLogic: 'Count of distinct facilities that have at least one active lounge (phase > 0, status = 1) matching the selected filters.',
+              queryLogic: `SELECT COUNT(DISTINCT lm.facilityId) AS totalFacilities
+FROM   loungeMaster lm
+JOIN   facilitylist f ON lm.facilityId = f.FacilityID
+WHERE  f.Status = 1
+  AND  lm.status = 1
+  AND  lm.phase > 0
+  AND  f.StateID IN (:stateIds)
+  AND  f.PRIDistrictCode IN (:districtCodes)
+  AND  f.FacilityTypeID  IN (:typeIds)
+  AND  lm.facilityId     IN (:facilityIds)`,
+              formulas: ['Total Facilities = COUNT(DISTINCT lm.facilityId)'],
+            }} />
+
+          <KpiCard label="Daily App Use" value={k.appUsePct != null ? `${k.appUsePct}%` : '—'}
+            sub={`${k.appUseFacilities ?? 0} / ${k.totalFacilities ?? 0} facilities · all ${k.totalDays ?? 0} days`}
+            accent="#0ea5e9" loading={loading.kpis}
+            onDebug={setActiveDebugInfo} debugInfo={{
+              title: 'Daily App Use % (Fully Compliant Facilities)',
+              sourceTable: 'nurseDutyChange, loungeMaster, facilitylist',
+              appliedLogic: 'Counts facilities that had at least one nurseDutyChange (nurse check-in) record on EVERY calendar day of the selected range. A facility active on only 6 of 7 days is NOT counted.',
+              queryLogic: `SELECT COUNT(DISTINCT lm.facilityId) AS compliantFacilities
+FROM (
+  SELECT lm.loungeId, lm.facilityId,
+         COUNT(DISTINCT DATE(ndc.addDate)) AS daysActive
+  FROM   nurseDutyChange ndc
+  JOIN   loungeMaster lm ON ndc.loungeId  = lm.loungeId
+  JOIN   facilitylist  f  ON lm.facilityId = f.FacilityID
+  WHERE  f.Status  = 1
+    AND  lm.status = 1
+    AND  lm.phase  > 0
+    AND  DATE(ndc.addDate) BETWEEN :startDate AND :endDate
+  GROUP  BY lm.loungeId, lm.facilityId
+  HAVING daysActive >= :totalDays
+) t`,
+              formulas: ['Daily App Use % = (facilities active on all days / total facilities) × 100'],
+            }} />
+
+          <KpiCard label="Total Babies" value={k.totalBaby ?? '—'} unit="admissions" accent="#8b5cf6" loading={loading.kpis}
+            onDebug={setActiveDebugInfo} debugInfo={{
+              title: 'Total Babies',
+              sourceTable: 'babyAdmission',
+              appliedLogic: 'Count of distinct baby admission records (status = 1) whose admissionDateTime falls within the selected date range.',
+              queryLogic: `SELECT COUNT(DISTINCT ba.id) AS totalBaby
+FROM   babyAdmission ba
+JOIN   loungeMaster lm ON ba.loungeId  = lm.loungeId
+JOIN   facilitylist  f  ON lm.facilityId = f.FacilityID
+WHERE  f.Status = 1 AND lm.status = 1 AND lm.phase > 0
+  AND  ba.status = 1
+  AND  ba.admissionDateTime BETWEEN :startTs AND :endTs`,
+              formulas: ['Total Babies = COUNT(DISTINCT babyAdmission.id)'],
+            }} />
+
+          <KpiCard label="LBW Admitted" value={k.lbwAdmitted ?? '—'} unit="LBW babies" accent="#f59e0b" loading={loading.kpis}
+            onDebug={setActiveDebugInfo} debugInfo={{
+              title: 'LBW Admitted',
+              sourceTable: 'babyAdmission, babyRegistration',
+              appliedLogic: 'Count of admitted babies whose recorded birth weight is < 2500 g and birthWeightAvailable = "Yes" in babyRegistration.',
+              queryLogic: `SELECT COUNT(DISTINCT ba.id) AS lbwAdmitted
+FROM   babyAdmission ba
+JOIN   babyRegistration br ON ba.babyId  = br.babyId
+JOIN   loungeMaster lm     ON ba.loungeId = lm.loungeId
+JOIN   facilitylist  f     ON lm.facilityId = f.FacilityID
+WHERE  f.Status = 1 AND lm.status = 1 AND lm.phase > 0
+  AND  ba.status = 1
+  AND  ba.admissionDateTime BETWEEN :startTs AND :endTs
+  AND  br.babyWeight < 2500
+  AND  br.birthWeightAvailable = 'Yes'`,
+              formulas: ['LBW Admitted = COUNT(DISTINCT ba.id) WHERE br.babyWeight < 2500'],
+            }} />
+
+          <KpiCard label="LBW Discharged" value={k.lbwDischarged ?? '—'} unit="LBW babies" accent="#10b981" loading={loading.kpis}
+            onDebug={setActiveDebugInfo} debugInfo={{
+              title: 'LBW Discharged',
+              sourceTable: 'babyAdmission, babyRegistration',
+              appliedLogic: 'Among LBW admissions (birth weight < 2500 g), count those with a non-null dateOfDischarge recorded during the period.',
+              queryLogic: `SELECT COUNT(DISTINCT CASE
+               WHEN ba.dateOfDischarge IS NOT NULL THEN ba.id END) AS lbwDischarged
+FROM   babyAdmission ba
+JOIN   babyRegistration br ON ba.babyId  = br.babyId
+JOIN   loungeMaster lm     ON ba.loungeId = lm.loungeId
+JOIN   facilitylist  f     ON lm.facilityId = f.FacilityID
+WHERE  f.Status = 1 AND lm.status = 1 AND lm.phase > 0
+  AND  ba.status = 1
+  AND  ba.admissionDateTime BETWEEN :startTs AND :endTs
+  AND  br.babyWeight < 2500
+  AND  br.birthWeightAvailable = 'Yes'`,
+              formulas: ['LBW Discharged = COUNT(DISTINCT ba.id) WHERE dateOfDischarge IS NOT NULL AND br.babyWeight < 2500'],
+            }} />
+
+          <KpiCard label="48h Stay" value={k.stay48 ?? '—'} unit="babies stayed ≥48h" accent="#3b82f6" loading={loading.kpis}
+            onDebug={setActiveDebugInfo} debugInfo={{
+              title: '48-Hour Stay',
+              sourceTable: 'babyAdmission',
+              appliedLogic: 'Count of babies who were discharged and whose length of stay (admissionDateTime → dateOfDischarge) is at least 48 hours.',
+              queryLogic: `SELECT COUNT(DISTINCT CASE
+               WHEN ba.dateOfDischarge IS NOT NULL
+                AND TIMESTAMPDIFF(HOUR, ba.admissionDateTime, ba.dateOfDischarge) >= 48
+               THEN ba.id END) AS stay48
+FROM   babyAdmission ba
+JOIN   loungeMaster lm ON ba.loungeId = lm.loungeId
+JOIN   facilitylist  f  ON lm.facilityId = f.FacilityID
+WHERE  f.Status = 1 AND lm.status = 1 AND lm.phase > 0
+  AND  ba.status = 1
+  AND  ba.admissionDateTime BETWEEN :startTs AND :endTs`,
+              formulas: ['48h Stay = COUNT(ba.id) WHERE TIMESTAMPDIFF(HOUR, admissionDateTime, dateOfDischarge) >= 48'],
+            }} />
+
           <KpiCard label="Exclusive BF"
-                   value={k.bfPct != null ? `${k.bfPct}%` : '—'}
-                   sub={`${k.exclusiveBF ?? 0} of ${k.bfTotal ?? 0} babies`}
-                   accent="#ec4899" loading={loading.kpis} />
+            value={k.bfPct != null ? `${k.bfPct}%` : '—'}
+            sub={`${k.exclusiveBF ?? 0} of ${k.bfTotal ?? 0} babies`}
+            accent="#ec4899" loading={loading.kpis}
+            onDebug={setActiveDebugInfo} debugInfo={{
+              title: 'Exclusive Breastfeeding %',
+              sourceTable: 'babyAdmission, babyDailyNutrition',
+              appliedLogic: 'A baby is "exclusive BF" if none of their babyDailyNutrition records contain a non-exclusive breastfeed method (method IDs 3–15). Only babies with at least one nutrition record are counted in the denominator.',
+              queryLogic: `-- Exclusive BF = breastFeedMethod contains ONLY method 1 (Breastfeed) or 2 (Expressed BM)
+-- non_excl: records where method 3-15 (non-exclusive) is present
+-- rec_count: only records with a valid, non-null, non-empty breastFeedMethod
+
+SELECT SUM(CASE WHEN non_excl = 0 AND rec_count > 0 THEN 1 ELSE 0 END) AS exclusive,
+       COUNT(*) AS bfTotal
+FROM (
+  SELECT ba.id,
+    SUM(CASE WHEN bdn.breastFeedMethod IS NOT NULL
+      AND bdn.breastFeedMethod NOT IN ('null', '[]', '')
+      AND JSON_OVERLAPS(bdn.breastFeedMethod,
+        '["3","4","5","6","7","8","9","10","11","12","13","14","15"]')
+      THEN 1 ELSE 0 END) AS non_excl,
+    SUM(CASE WHEN bdn.breastFeedMethod IS NOT NULL
+      AND bdn.breastFeedMethod NOT IN ('null', '[]', '')
+      THEN 1 ELSE 0 END) AS rec_count
+  FROM   babyAdmission ba
+  JOIN   babyDailyNutrition bdn ON bdn.babyAdmissionId = ba.id
+  JOIN   loungeMaster lm ON ba.loungeId = lm.loungeId
+  JOIN   facilitylist  f  ON lm.facilityId = f.FacilityID
+  WHERE  f.Status = 1 AND lm.status = 1 AND lm.phase > 0
+    AND  ba.status = 1
+    AND  ba.admissionDateTime BETWEEN :startTs AND :endTs
+  GROUP  BY ba.id
+) t`,
+              formulas: ['Exclusive BF % = (babies with no non-exclusive BF method / total babies with BF records) × 100'],
+            }} />
+
           <KpiCard label="Wt Gain / Stable"
-                   value={k.gsPct != null ? `${k.gsPct}%` : '—'}
-                   sub={`${k.gainStable ?? 0} of ${k.wsTotal ?? 0} babies`}
-                   accent="#22c55e" loading={loading.kpis} />
-          <KpiCard label="Baby Assessed"   value={k.babyAssessed ?? '—'}   unit="babies"           accent="#f97316" loading={loading.kpis} />
-          <KpiCard label="Total Mothers"   value={k.totalMothers ?? '—'}   unit="admissions"       accent="#a855f7" loading={loading.kpis} />
+            value={k.gsPct != null ? `${k.gsPct}%` : '—'}
+            sub={`${k.gainStable ?? 0} of ${k.wsTotal ?? 0} babies`}
+            accent="#22c55e" loading={loading.kpis}
+            onDebug={setActiveDebugInfo} debugInfo={{
+              title: 'Weight Gain / Stable %',
+              sourceTable: 'babyAdmission, babyDailyWeight',
+              appliedLogic: 'Compares each baby\'s admission weight (babyDailyWeight weightType = 1, earliest record) against their discharge weight (weightType = 4, latest record). Baby is "gain/stable" if discharge_wt ≥ birth_wt. Only babies with both weight records are included.',
+              queryLogic: `SELECT SUM(CASE WHEN discharge_wt >= birth_wt THEN 1 ELSE 0 END) AS gainStable,
+       COUNT(*) AS wsTotal
+FROM (
+  SELECT ba.id,
+    (SELECT bdw.babyWeight FROM babyDailyWeight bdw
+     WHERE  bdw.babyAdmissionId = ba.id AND bdw.weightType = 1
+     ORDER  BY bdw.id LIMIT 1)      AS birth_wt,
+    (SELECT bdw.babyWeight FROM babyDailyWeight bdw
+     WHERE  bdw.babyAdmissionId = ba.id AND bdw.weightType = 4
+     ORDER  BY bdw.id DESC LIMIT 1) AS discharge_wt
+  FROM   babyAdmission ba
+  JOIN   loungeMaster lm ON ba.loungeId = lm.loungeId
+  JOIN   facilitylist  f  ON lm.facilityId = f.FacilityID
+  WHERE  f.Status = 1 AND lm.status = 1 AND lm.phase > 0
+    AND  ba.status = 1
+    AND  ba.admissionDateTime BETWEEN :startTs AND :endTs
+) t
+WHERE  birth_wt IS NOT NULL AND discharge_wt IS NOT NULL`,
+              formulas: ['Wt Gain/Stable % = (discharge_wt ≥ birth_wt count / total babies with both weight records) × 100'],
+            }} />
+
+          <KpiCard label="Baby Assessed" value={k.babyAssessed ?? '—'} unit="babies" accent="#f97316" loading={loading.kpis}
+            onDebug={setActiveDebugInfo} debugInfo={{
+              title: 'Baby Assessed',
+              sourceTable: 'babyDailyMonitoring, babyAdmission',
+              appliedLogic: 'Count of distinct baby admissions that have at least one daily monitoring (assessment) record during the selected period.',
+              queryLogic: `SELECT COUNT(DISTINCT bdm.babyAdmissionId) AS assessed
+FROM   babyDailyMonitoring bdm
+JOIN   babyAdmission ba ON bdm.babyAdmissionId = ba.id AND ba.status = 1
+JOIN   loungeMaster lm  ON ba.loungeId  = lm.loungeId
+JOIN   facilitylist  f  ON lm.facilityId = f.FacilityID
+WHERE  f.Status = 1 AND lm.status = 1 AND lm.phase > 0
+  AND  ba.admissionDateTime BETWEEN :startTs AND :endTs`,
+              formulas: ['Baby Assessed = COUNT(DISTINCT babyDailyMonitoring.babyAdmissionId)'],
+            }} />
+
+          <KpiCard label="Total Mothers" value={k.totalMothers ?? '—'} unit="admissions" accent="#a855f7" loading={loading.kpis}
+            onDebug={setActiveDebugInfo} debugInfo={{
+              title: 'Total Mothers',
+              sourceTable: 'motherAdmission',
+              appliedLogic: 'Count of distinct mother admission records (status = 1) whose addDate falls within the selected date range.',
+              queryLogic: `SELECT COUNT(DISTINCT ma.id) AS totalMothers
+FROM   motherAdmission ma
+JOIN   loungeMaster lm ON ma.loungeId  = lm.loungeId
+JOIN   facilitylist  f  ON lm.facilityId = f.FacilityID
+WHERE  f.Status = 1 AND lm.status = 1 AND lm.phase > 0
+  AND  ma.status = 1
+  AND  ma.addDate BETWEEN :startTs AND :endTs`,
+              formulas: ['Total Mothers = COUNT(DISTINCT motherAdmission.id)'],
+            }} />
         </section>
 
         {/* ── Facility Matrix ─────────────────────────────────────────────── */}
         <section className="dd-matrix-section">
           <div className="dd-card">
             <div className="dd-card-header">
-              <h2 className="dd-card-title">Facility Performance Matrix</h2>
+              <div className="dd-card-title-row">
+                <h2 className="dd-card-title">Facility Performance Matrix</h2>
+                <DebugIcon onClick={setActiveDebugInfo} info={{
+                  title: 'Facility Performance Matrix',
+                  sourceTable: 'facilitylist, loungeMaster, nurseDutyChange, babyAdmission, babyRegistration, babyDailyMonitoring, babyDailyNutrition, babyDailyWeight, motherAdmission',
+                  appliedLogic: 'Per-facility aggregation of all clinical KPIs plus a daily app-activity grid. Each row represents one facility; coloured squares show whether any nurseDutyChange record exists for that facility on each day. Period totals mirror the KPI card calculations but scoped per facilityId.',
+                  queryLogic: `-- App use per lounge per day (facilityId carried for facility-level rollup)
+SELECT lm.loungeId, lm.facilityId,
+       DATE_FORMAT(DATE(ndc.addDate), '%Y-%m-%d') AS dt
+FROM   nurseDutyChange ndc
+JOIN   loungeMaster lm ON ndc.loungeId = lm.loungeId
+WHERE  lm.facilityId IN (:facilityIds)
+  AND  lm.phase > 0
+  AND  DATE(ndc.addDate) BETWEEN :startDate AND :endDate
+GROUP  BY lm.loungeId, lm.facilityId, dt
+
+-- 6 additional parallel queries follow the same facilityId GROUP BY pattern:
+-- (2) babyAdmission totals + 48h stay
+-- (3) LBW admitted + discharged
+-- (4) babyDailyMonitoring assessment count
+-- (5) exclusive BF via babyDailyNutrition
+-- (6) weight gain/stable via babyDailyWeight
+-- (7) motherAdmission total`,
+                  formulas: [
+                    'App% per facility = (days with nurseDutyChange / total days in range) × 100',
+                    'LBW % = LBW admitted / total babies admitted',
+                    'Exclusive BF % = exclusive babies / babies with BF records × 100',
+                    'Wt Gain/Stable % = discharge_wt ≥ birth_wt count / babies with both weights × 100',
+                  ],
+                }} />
+              </div>
               <p className="dd-card-sub">
                 Daily iKMC app use (squares) + period aggregates per facility
               </p>
@@ -314,7 +716,7 @@ export default function DistrictDashboard() {
                         return (
                           <th key={dt} className="dd-th-day">
                             <div className="dd-day-dow">{DAY_ABBR[d.getUTCDay()]}</div>
-                            <div className="dd-day-date">{dt.slice(5)}</div>
+                            <div className="dd-day-date">{`${dt.slice(8)}-${dt.slice(5, 7)}`}</div>
                           </th>
                         );
                       })}
@@ -326,7 +728,6 @@ export default function DistrictDashboard() {
                       <th className="dd-th-kpi">Total Baby</th>
                       <th className="dd-th-kpi">Baby Ass.</th>
                       <th className="dd-th-kpi">Total Mother</th>
-                      <th className="dd-th-kpi">App%</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -344,7 +745,7 @@ export default function DistrictDashboard() {
                           <td key={i} className="dd-td-day">
                             <div
                               className={`dd-sq ${used ? 'dd-sq--on' : 'dd-sq--off'}`}
-                              title={`${mat.dates[i]}${used ? ' · App used' : ' · No activity'}`}
+                              title={`${fmtDDMMYYYY(mat.dates[i])}${used ? ' · ✓ App used' : ' · ✗ No check-in'}`}
                             />
                           </td>
                         ))}
@@ -357,15 +758,6 @@ export default function DistrictDashboard() {
                         <td className="dd-td-kpi">{fac.totalBaby}</td>
                         <td className="dd-td-kpi">{fac.assessed}</td>
                         <td className="dd-td-kpi">{fac.totalMothers}</td>
-                        <td className="dd-td-kpi">
-                          <span className={`dd-app-pct ${
-                            fac.appUsePct >= 70 ? 'dd-pct-hi'
-                            : fac.appUsePct >= 40 ? 'dd-pct-mid'
-                            : 'dd-pct-lo'
-                          }`}>
-                            {fac.appUsePct}%
-                          </span>
-                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -376,72 +768,130 @@ export default function DistrictDashboard() {
             {!loading.matrix && mat.facilities.length > 0 && (
               <div className="dd-legend">
                 <span className="dd-leg-item">
-                  <span className="dd-leg-sq dd-leg-on" /> App Used
+                  <span className="dd-leg-sq dd-leg-on" /> App Used (check-in recorded)
                 </span>
                 <span className="dd-leg-item">
-                  <span className="dd-leg-sq dd-leg-off" /> No Activity
-                </span>
-                <span className="dd-leg-item">
-                  <span className="dd-app-pct dd-pct-hi">70%+</span> High
-                </span>
-                <span className="dd-leg-item">
-                  <span className="dd-app-pct dd-pct-mid">40–69%</span> Moderate
-                </span>
-                <span className="dd-leg-item">
-                  <span className="dd-app-pct dd-pct-lo">&lt;40%</span> Low
+                  <span className="dd-leg-sq dd-leg-off" /> No Check-in (alert)
                 </span>
               </div>
             )}
           </div>
         </section>
 
-        {/* ── Weekly Insights ─────────────────────────────────────────────── */}
-        {!loading.kpis && !loading.matrix && visibleInsights.length > 0 && (
+        {/* ── Weekly Insights (Gemini — Hindi) ─────────────────────────── */}
+        {!loading.kpis && !loading.matrix && (
           <section className="dd-insights-section">
             <div className="dd-insights-header">
               <span className="dd-insights-title">
                 <InsightIcon type="info" size={16} />
-                Weekly Insights
+                साप्ताहिक विश्लेषण
               </span>
-              {dismissedInsights.size < allInsights.length && (
+              {weeklyInsights?.length > 0 && dismissedInsights.size < weeklyInsights.length && (
                 <button
                   className="dd-insights-clear"
-                  onClick={() => setDismissedInsights(new Set(allInsights.map((_, i) => i)))}
+                  onClick={() => setDismissedInsights(new Set(weeklyInsights.map((_, i) => i)))}
                 >
-                  Dismiss all
+                  सभी हटाएं
                 </button>
               )}
             </div>
 
-            <div className="dd-insights-grid">
-              {allInsights.map((insight, i) => {
-                if (dismissedInsights.has(i)) return null;
-                return (
-                  <div key={i} className={`dd-insight-card dd-insight-${insight.type}`}>
-                    <div className="dd-insight-icon">
-                      <InsightIcon type={insight.type} size={18} />
+            {/* Loading state */}
+            {loading.insights && (
+              <div className="dd-insights-loading">
+                <div className="dd-insights-spinner" />
+                <LoadingDots />
+              </div>
+            )}
+
+            {/* Error state — show real server/Gemini error */}
+            {!loading.insights && insightsError && (
+              <div className="dd-insights-notice">
+                ⚠️ <strong>Gemini Error:</strong> {insightsError}
+                <br />
+                <span style={{ fontSize: '12px', marginTop: 4, display: 'block' }}>
+                  सुनिश्चित करें कि <code>server/.env</code> में सही <code>GEMINI_API_KEY</code> है और सर्वर को पुनः चालू करें।
+                </span>
+              </div>
+            )}
+
+            {/* Insights grid */}
+            {!loading.insights && weeklyInsights?.length > 0 && (
+              <div className="dd-insights-grid">
+                {weeklyInsights.map((insight, i) => {
+                  if (dismissedInsights.has(i)) return null;
+                  return (
+                    <div key={i} className={`dd-insight-card dd-insight-${insight.type || 'info'}`}>
+                      <div className="dd-insight-icon">
+                        <InsightIcon type={insight.type || 'info'} size={18} />
+                      </div>
+                      <p className="dd-insight-text">{insight.text}</p>
+                      <button
+                        className="dd-insight-dismiss"
+                        onClick={() => setDismissedInsights(prev => new Set([...prev, i]))}
+                        title="हटाएं"
+                      >×</button>
                     </div>
-                    <p className="dd-insight-text">{insight.text}</p>
-                    <button
-                      className="dd-insight-dismiss"
-                      onClick={() => setDismissedInsights(prev => new Set([...prev, i]))}
-                      title="Dismiss"
-                    >
-                      ×
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </section>
         )}
 
       </div>
+
+      <DebugModal
+        info={activeDebugInfo}
+        onClose={() => setActiveDebugInfo(null)}
+        filterRows={debugFilterRows}
+        queryParams={{
+          startDate:     `'${startDate}'`,
+          endDate:       `'${endDate}'`,
+          startTs:       `'${startDate} 00:00:00'`,
+          endTs:         `'${endDate} 23:59:59'`,
+          totalDays:     String(kpis?.period?.totalDays ?? mat.dates.length ?? 7),
+          stateIds:      selStateIds.length && selStateIds.length < (filterOptions?.states?.length ?? 0)
+                           ? selStateIds.join(', ')
+                           : '/* all states */',
+          districtCodes: selDistrictIds.length && selDistrictIds.length < (filterOptions?.districts?.length ?? 0)
+                           ? selDistrictIds.join(', ')
+                           : '/* all districts */',
+          typeIds:       selTypeIds.length && selTypeIds.length < (filterOptions?.facilityTypes?.length ?? 0)
+                           ? selTypeIds.join(', ')
+                           : '/* all types */',
+          facilityIds:   selFacilityIds.length && selFacilityIds.length < (filterOptions?.facilities?.length ?? 0)
+                           ? selFacilityIds.join(', ')
+                           : '/* all facilities */',
+        }}
+      />
     </div>
   );
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────
+
+function LoadingDots() {
+  const [dot, setDot] = React.useState(0);
+  React.useEffect(() => {
+    const t = setInterval(() => setDot(d => (d + 1) % 4), 500);
+    return () => clearInterval(t);
+  }, []);
+  const msgs = [
+    'साप्ताहिक विश्लेषण तैयार हो रहा है',
+    'डेटा का विश्लेषण किया जा रहा है',
+    'अंतर्दृष्टि तैयार की जा रही है',
+    'कृपया प्रतीक्षा करें',
+  ];
+  return (
+    <span>
+      {msgs[dot % msgs.length]}
+      <span style={{ letterSpacing: 2, marginLeft: 2 }}>
+        {'•'.repeat((dot % 3) + 1)}
+      </span>
+    </span>
+  );
+}
 
 function FilterGroup({ label, children }) {
   return (
@@ -452,11 +902,16 @@ function FilterGroup({ label, children }) {
   );
 }
 
-function KpiCard({ label, value, unit, sub, accent, loading }) {
+function KpiCard({ label, value, unit, sub, accent, loading, debugInfo, onDebug }) {
   return (
     <div className="dd-kpi-card" style={{ '--kpi-accent': accent }}>
       <div className="dd-kpi-accent-bar" />
       <div className="dd-kpi-body">
+        {/* Label + settings icon always at top */}
+        <div className="dd-kpi-label">
+          {label}
+          {debugInfo && onDebug && <DebugIcon onClick={onDebug} info={debugInfo} />}
+        </div>
         {loading ? (
           <div className="dd-kpi-shimmer" />
         ) : (
@@ -464,7 +919,6 @@ function KpiCard({ label, value, unit, sub, accent, loading }) {
         )}
         {!loading && unit && <div className="dd-kpi-unit">{unit}</div>}
         {!loading && sub  && <div className="dd-kpi-sub">{sub}</div>}
-        <div className="dd-kpi-label">{label}</div>
       </div>
     </div>
   );
