@@ -19,7 +19,7 @@ function parseMultiIds(raw) {
 }
 
 function buildFacilityConditions(query, fAlias = 'f', lmAlias = 'lm') {
-  const conds  = [`${fAlias}.Status = 1`, `${lmAlias}.status = 1`, `${lmAlias}.phase IS NOT NULL`];
+  const conds  = [`${fAlias}.Status = 1`, `${lmAlias}.status = 1`, `${lmAlias}.phase > 0`];
   const values = [];
 
   const stateIds      = parseMultiIds(query.stateId);
