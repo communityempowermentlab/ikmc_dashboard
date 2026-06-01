@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import {
   fetchStates, fetchDistricts, fetchFacilities, fetchLounges,
   fetchEarliestDate,
+  setAllSelections,
 } from '../../redux/slices/filterSlice';
 import FilterDrawer from './FilterDrawer';
 import './HeaderFilters.css';
@@ -13,17 +14,32 @@ const fmtDDMMYYYY = s => (s ? `${s.slice(8)}-${s.slice(5, 7)}-${s.slice(0, 4)}` 
 const HeaderFilters = () => {
   const dispatch = useDispatch();
   const { startDate, endDate } = useSelector(state => state.filters);
-
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
-  // Bootstrap: load all filter options + date range on mount
   useEffect(() => {
-    dispatch(fetchStates());
-    dispatch(fetchDistricts([]));
-    dispatch(fetchFacilities([]));
-    dispatch(fetchLounges([]));
-    dispatch(fetchEarliestDate());
-  }, [dispatch]);
+    const bootstrap = async () => {
+      // Load all filter options in parallel
+      const [statesRes, districtsRes, facilitiesRes, loungesRes] = await Promise.all([
+        dispatch(fetchStates()),
+        dispatch(fetchDistricts([])),
+        dispatch(fetchFacilities([])),
+        dispatch(fetchLounges([])),
+      ]);
+
+      // Select ALL available options as the default
+      dispatch(setAllSelections({
+        states:     statesRes.payload?.map(s => s.id)    || [],
+        districts:  districtsRes.payload?.map(d => d.id) || [],
+        facilities: facilitiesRes.payload?.map(f => f.id)|| [],
+        lounges:    loungesRes.payload?.map(l => l.id)   || [],
+      }));
+
+      // Date range: From = first check-in record, To = today
+      dispatch(fetchEarliestDate());
+    };
+
+    bootstrap();
+  }, [dispatch]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const filterBadge = startDate && endDate
     ? `${fmtDDMMYYYY(startDate)} → ${fmtDDMMYYYY(endDate)}`

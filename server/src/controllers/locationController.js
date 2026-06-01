@@ -110,7 +110,7 @@ exports.getFacilitiesByDistricts = async (req, res) => {
 exports.getLoungesByFacilities = async (req, res) => {
     try {
         const ids = parseIds(req.query.facilityIds);
-        let sql = 'SELECT loungeId AS id, loungeName AS name FROM loungeMaster WHERE status = 1';
+        let sql = 'SELECT loungeId AS id, loungeName AS name, facilityId FROM loungeMaster WHERE status = 1';
         let params = [];
         if (ids.length) {
             const ph = ids.map(() => '?').join(',');

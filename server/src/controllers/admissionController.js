@@ -42,13 +42,14 @@ function getPrecedingDateRange(startDate, endDate) {
     return { prevStartDate: fmt(prevStartMs), prevEndDate: fmt(prevEndMs) };
 }
 
-// ── Earliest admission date ───────────────────────────────────────────────────
+// ── Earliest check-in date ────────────────────────────────────────────────────
 // GET /api/v1/admissions/earliest
+// Returns the date of the very first nurseDutyChange (check-in) record in the DB
 exports.getEarliestAdmissionDate = async (req, res) => {
     try {
         const [rows] = await pool.query(
-            `SELECT DATE_FORMAT(MIN(admissionDateTime), '%Y-%m-%d') AS earliest
-             FROM babyAdmission WHERE status IN (1, 2)`
+            `SELECT DATE_FORMAT(MIN(DATE(addDate)), '%Y-%m-%d') AS earliest
+             FROM nurseDutyChange WHERE addDate IS NOT NULL AND status = 1`
         );
         res.json({ earliest: rows[0].earliest });
     } catch (err) {

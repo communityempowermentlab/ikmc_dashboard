@@ -3,7 +3,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import {
   fetchDistricts, fetchFacilities, fetchLounges,
   setSelectedStates, setSelectedDistricts, setSelectedFacilities, setSelectedLounges,
-  setDateRange, toggleSectionVisibility, resetSectionVisibility,
+  setAllSelections, setDateRange, toggleSectionVisibility, resetSectionVisibility,
 } from '../../redux/slices/filterSlice';
 import SearchableSelect from './SearchableSelect';
 import './FilterDrawer.css';
@@ -122,23 +122,27 @@ const FilterDrawer = ({ isOpen, onClose }) => {
   };
 
   const handleReset = () => {
-    setDraftStates([]);
-    setDraftDistricts([]);
-    setDraftFacilities([]);
-    setDraftLounges([]);
+    // Reset to default: ALL options selected, full date range
+    const allStateIds    = states.map(s => s.id);
+    const allDistIds     = districts.map(d => d.id);
+    const allFacIds      = facilities.map(f => f.id);
+    const allLoungeIds   = lounges.map(l => l.id);
+    setDraftStates(allStateIds);
+    setDraftDistricts(allDistIds);
+    setDraftFacilities(allFacIds);
+    setDraftLounges(allLoungeIds);
     setDraftStartDate(earliestDate || startDate);
     setDraftEndDate(todayStr());
-    // Reload all unfiltered options
-    dispatch(fetchDistricts([]));
-    dispatch(fetchFacilities([]));
-    dispatch(fetchLounges([]));
   };
 
   const handleApply = () => {
-    dispatch(setSelectedStates(draftStates));
-    dispatch(setSelectedDistricts(draftDistricts));
-    dispatch(setSelectedFacilities(draftFacilities));
-    dispatch(setSelectedLounges(draftLounges));
+    // Use setAllSelections to avoid cascade clearing of option arrays
+    dispatch(setAllSelections({
+      states:     draftStates,
+      districts:  draftDistricts,
+      facilities: draftFacilities,
+      lounges:    draftLounges,
+    }));
     dispatch(setDateRange({ startDate: draftStartDate, endDate: draftEndDate }));
     onClose();
   };

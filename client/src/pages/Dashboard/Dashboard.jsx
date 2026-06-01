@@ -181,6 +181,7 @@ const Dashboard = () => {
     const params = { startDate, endDate };
     if (selectedFacilitiesKey) params.facilityIds = selectedFacilitiesKey;
     if (selectedLoungesKey)    params.loungeIds   = selectedLoungesKey;
+    // Clinical metrics — work without a facility filter (scope limited by date range)
     dispatch(fetchAdmissionKpi(params));
     dispatch(fetchAdmissionTrend(params));
     dispatch(fetchAdmissionComposition(params));
@@ -194,8 +195,12 @@ const Dashboard = () => {
     dispatch(fetchStayDuration(params));
     dispatch(fetchWeightStability(params));
     dispatch(fetchBreastfeeding(params));
-    dispatch(fetchLoungePerformance(params));
-    dispatch(fetchAttendanceMatrix(params));
+    // Nurse sections are lounge-level: only fetch when a lounge is selected
+    // (scanning all nurses across all facilities without a lounge filter is too expensive)
+    if (selectedLoungesKey) {
+      dispatch(fetchLoungePerformance(params));
+      dispatch(fetchAttendanceMatrix(params));
+    }
   }, [selectedFacilitiesKey, selectedLoungesKey, startDate, endDate, dispatch]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── KMC Duration trend chart (dynamic) ───────────────────────────────────

@@ -114,6 +114,15 @@ const filterSlice = createSlice({
     setSelectedLounges(state, action) {
       state.selectedLounges = action.payload;
     },
+    // Sets all four selections at once without cascade-clearing the option arrays
+    // Used by the bootstrap so the filter drawer still has its options visible
+    setAllSelections(state, action) {
+      const { states, districts, facilities, lounges } = action.payload;
+      state.selectedStates     = states     || [];
+      state.selectedDistricts  = districts  || [];
+      state.selectedFacilities = facilities || [];
+      state.selectedLounges    = lounges    || [];
+    },
     setDateRange(state, action) {
       state.startDate = action.payload.startDate;
       state.endDate   = action.payload.endDate;
@@ -153,7 +162,7 @@ const filterSlice = createSlice({
       .addCase(fetchEarliestDate.fulfilled, (s, a) => {
         const earliest = a.payload || todayStr();
         s.earliestDate = earliest;
-        s.startDate    = earliest;
+        s.startDate    = earliest;   // full history — user can narrow with filters
         s.endDate      = todayStr();
       });
   },
@@ -164,6 +173,7 @@ export const {
   setSelectedDistricts,
   setSelectedFacilities,
   setSelectedLounges,
+  setAllSelections,
   setDateRange,
   setStartDate,
   setEndDate,
