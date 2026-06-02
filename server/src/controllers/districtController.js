@@ -51,6 +51,18 @@ function buildFacilityConditions(query, fAlias = 'f', lmAlias = 'lm') {
   return { conds, values };
 }
 
+function buildLoungeConditions(query, lmAlias = 'lm') {
+  const conds  = [`${lmAlias}.status = 1`, `${lmAlias}.phase > 0`];
+  const values = [];
+  const facilityIds = parseMultiIds(query.facilityId);
+  if (facilityIds.length) {
+    const ph = facilityIds.map(() => '?').join(',');
+    conds.push(`${lmAlias}.facilityId IN (${ph})`);
+    values.push(...facilityIds);
+  }
+  return { conds, values };
+}
+
 // GET /api/v1/district/filters
 exports.getFilters = async (req, res) => {
   try {
@@ -99,6 +111,8 @@ exports.getKpiSummary = async (req, res) => {
     const { start, end } = buildDateRange(req.query.startDate, req.query.endDate);
     const { conds, values } = buildFacilityConditions(req.query);
     const condStr = conds.join(' AND ');
+    const { conds: lmConds, values: lmVals } = buildLoungeConditions(req.query);
+    const lmCondStr = lmConds.join(' AND ');
     const startTs = `${start} 00:00:00`;
     const endTs   = `${end} 23:59:59`;
 
@@ -116,20 +130,27 @@ exports.getKpiSummary = async (req, res) => {
       (new Date(end + 'T12:00:00Z') - new Date(start + 'T12:00:00Z')) / 86400000
     ) + 1;
 
-    // Facilities where at least one lounge was active EVERY day of the range
+    // Total lounges in scope (denominator for app use %)
+    const [loungeCount] = await pool.query(`
+      SELECT COUNT(DISTINCT lm.loungeId) AS total
+      FROM loungeMaster lm
+      WHERE ${lmCondStr}
+    `, lmVals);
+    const totalLounges = loungeCount[0].total || 0;
+
+    // Lounges active on EVERY day of the range
     const [appRows] = await pool.query(`
-      SELECT COUNT(DISTINCT facilityId) AS compliantFacilities
+      SELECT COUNT(*) AS compliantLounges
       FROM (
-        SELECT lm.loungeId, lm.facilityId, COUNT(DISTINCT DATE(ndc.addDate)) AS daysActive
+        SELECT lm.loungeId, COUNT(DISTINCT DATE(ndc.addDate)) AS daysActive
         FROM nurseDutyChange ndc
         JOIN loungeMaster lm ON ndc.loungeId = lm.loungeId
-        JOIN facilitylist f ON lm.facilityId = f.FacilityID
-        WHERE ${condStr} AND DATE(ndc.addDate) BETWEEN ? AND ?
+        WHERE ${lmCondStr} AND DATE(ndc.addDate) BETWEEN ? AND ?
         GROUP BY lm.loungeId
         HAVING daysActive >= ?
       ) t
-    `, [...values, start, end, totalDays]);
-    const appUseFacilities = n(appRows[0].compliantFacilities);
+    `, [...lmVals, start, end, totalDays]);
+    const appUseLounges = n(appRows[0].compliantLounges);
 
     const BA_JOIN = `
       JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
@@ -139,10 +160,11 @@ exports.getKpiSummary = async (req, res) => {
     // 1. Total Babies Admitted — status IN (1,2), admitted in period
     const [babyRows] = await pool.query(`
       SELECT COUNT(DISTINCT ba.id) AS totalBaby
-      FROM babyAdmission ba ${BA_JOIN}
-      WHERE ${condStr} AND ba.status IN (1, 2)
+      FROM babyAdmission ba
+      JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
+      WHERE ${lmCondStr} AND ba.status IN (1, 2)
         AND ba.admissionDateTime BETWEEN ? AND ?
-    `, [...values, startTs, endTs]);
+    `, [...lmVals, startTs, endTs]);
 
     // 2. 48h Stay
     //    status=1 (active): compare admissionDateTime → NOW()
@@ -167,21 +189,27 @@ exports.getKpiSummary = async (req, res) => {
         )
     `, [...values, startTs, endTs, startTs, endTs]);
 
-    // 3. LBW Admitted — status IN (1,2), admitted in period
-    //    LBW Discharged — status=2, discharged in period
-    const [lbwRows] = await pool.query(`
-      SELECT
-        COUNT(DISTINCT CASE
-          WHEN ba.admissionDateTime BETWEEN ? AND ?
-          THEN ba.id END) AS lbwAdmitted,
-        COUNT(DISTINCT CASE
-          WHEN ba.status = 2 AND ba.dateOfDischarge BETWEEN ? AND ?
-          THEN ba.id END) AS lbwDischarged
+    // 3a. LBW Admitted — status IN (1,2), admissionDateTime in period
+    const [lbwAdmRows] = await pool.query(`
+      SELECT COUNT(DISTINCT ba.id) AS lbwAdmitted
       FROM babyAdmission ba
-      JOIN babyRegistration br ON ba.babyId = br.babyId ${BA_JOIN}
-      WHERE ${condStr} AND ba.status IN (1, 2)
+      JOIN babyRegistration br ON ba.babyId = br.babyId
+      JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
+      WHERE ${lmCondStr} AND ba.status IN (1, 2)
+        AND ba.admissionDateTime BETWEEN ? AND ?
         AND br.babyWeight < 2500 AND br.birthWeightAvailable = 'Yes'
-    `, [...values, startTs, endTs, startTs, endTs]);
+    `, [...lmVals, startTs, endTs]);
+
+    // 3b. LBW Discharged — dateOfDischarge in period
+    const [lbwDisRows] = await pool.query(`
+      SELECT COUNT(DISTINCT ba.id) AS lbwDischarged
+      FROM babyAdmission ba
+      JOIN babyRegistration br ON ba.babyId = br.babyId
+      JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
+      WHERE ${lmCondStr}
+        AND ba.dateOfDischarge BETWEEN ? AND ?
+        AND br.babyWeight < 2500 AND br.birthWeightAvailable = 'Yes'
+    `, [...lmVals, startTs, endTs]);
 
     // 4. Baby Assessment — compliant if COUNT(assessmentDate in period) >= stay_hours / 12
     //    GREATEST(admissionDate, fromDate) → LEAST(dischargeDate, toDate) / 12
@@ -254,7 +282,7 @@ exports.getKpiSummary = async (req, res) => {
         AND ma.addDate BETWEEN ? AND ?
     `, [...values, startTs, endTs]);
 
-    const lbw      = lbwRows[0];
+    const lbw      = { lbwAdmitted: lbwAdmRows[0].lbwAdmitted, lbwDischarged: lbwDisRows[0].lbwDischarged };
     const stay     = stayRows[0];
     const bf       = bfRows[0];
     const ws       = wsRows[0];
@@ -270,9 +298,10 @@ exports.getKpiSummary = async (req, res) => {
       period: { start, end, totalDays },
       kpis: {
         totalFacilities,
+        totalLounges,
         totalDays,
-        appUseFacilities,
-        appUsePct:      totalFacilities > 0 ? Math.round((appUseFacilities / totalFacilities) * 100) : 0,
+        appUseLounges,
+        appUsePct:      totalLounges > 0 ? Math.round((appUseLounges / totalLounges) * 100) : 0,
         lbwAdmitted:    n(lbw.lbwAdmitted),
         lbwDischarged:  n(lbw.lbwDischarged),
         stay48,
@@ -337,7 +366,7 @@ exports.getFacilityMatrix = async (req, res) => {
       JOIN loungeMaster lm ON ndc.loungeId = lm.loungeId
       WHERE lm.facilityId IN (?) AND lm.phase > 0
         AND DATE(ndc.addDate) BETWEEN ? AND ?
-      GROUP BY lm.loungeId, DATE_FORMAT(DATE(ndc.addDate), '%Y-%m-%d')
+      GROUP BY lm.loungeId, lm.facilityId, DATE_FORMAT(DATE(ndc.addDate), '%Y-%m-%d')
     `, [facIds, start, end]);
 
     const BA_JOIN = 'JOIN loungeMaster lm ON ba.loungeId = lm.loungeId AND lm.phase > 0';
@@ -627,7 +656,7 @@ type के मान: "positive" (अच्छा), "warning" (ध्यान 
 
     const { GoogleGenerativeAI } = require('@google/generative-ai');
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
     const result = await model.generateContent(prompt);
     const raw    = result.response.text().trim();

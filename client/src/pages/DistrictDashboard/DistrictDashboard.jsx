@@ -38,7 +38,7 @@ function computeInsights(mat, kpis) {
   // Overall app use sentiment
   insights.push({
     type: kpis.appUsePct >= 70 ? 'positive' : kpis.appUsePct >= 40 ? 'warning' : 'critical',
-    text: `Daily app compliance: ${kpis.appUsePct}% — ${kpis.appUseFacilities} of ${kpis.totalFacilities} facilities checked in every day of the ${kpis.totalDays}-day range.`,
+    text: `Daily app compliance: ${kpis.appUsePct}% — ${kpis.appUseLounges} of ${kpis.totalLounges} lounges checked in every day of the ${kpis.totalDays}-day range.`,
   });
 
   // Best performing facility
@@ -450,40 +450,37 @@ WHERE  f.Status = 1
             }} />
 
           <KpiCard label="Daily App Use" value={k.appUsePct != null ? `${k.appUsePct}%` : '—'}
-            sub={`${k.appUseFacilities ?? 0} / ${k.totalFacilities ?? 0} facilities · all ${k.totalDays ?? 0} days`}
+            sub={`${k.appUseLounges ?? 0} / ${k.totalLounges ?? 0} lounges · all ${k.totalDays ?? 0} days`}
             accent="#0ea5e9" loading={loading.kpis}
             onDebug={setActiveDebugInfo} debugInfo={{
-              title: 'Daily App Use % (Fully Compliant Facilities)',
-              sourceTable: 'nurseDutyChange, loungeMaster, facilitylist',
-              appliedLogic: 'Counts facilities that had at least one nurseDutyChange (nurse check-in) record on EVERY calendar day of the selected range. A facility active on only 6 of 7 days is NOT counted.',
-              queryLogic: `SELECT COUNT(DISTINCT lm.facilityId) AS compliantFacilities
+              title: 'Daily App Use % (Fully Compliant Lounges)',
+              sourceTable: 'nurseDutyChange, loungeMaster',
+              appliedLogic: 'Counts lounges that had at least one nurseDutyChange (nurse check-in) record on EVERY calendar day of the selected range. A lounge active on only 6 of 7 days is NOT counted.',
+              queryLogic: `SELECT COUNT(*) AS compliantLounges
 FROM (
-  SELECT lm.loungeId, lm.facilityId,
+  SELECT lm.loungeId,
          COUNT(DISTINCT DATE(ndc.addDate)) AS daysActive
   FROM   nurseDutyChange ndc
-  JOIN   loungeMaster lm ON ndc.loungeId  = lm.loungeId
-  JOIN   facilitylist  f  ON lm.facilityId = f.FacilityID
-  WHERE  f.Status  = 1
-    AND  lm.status = 1
+  JOIN   loungeMaster lm ON ndc.loungeId = lm.loungeId
+  WHERE  lm.status = 1
     AND  lm.phase  > 0
     AND  DATE(ndc.addDate) BETWEEN :startDate AND :endDate
   GROUP  BY lm.loungeId
   HAVING daysActive >= :totalDays
 ) t`,
-              formulas: ['Daily App Use % = (facilities active on all days / total facilities) × 100'],
+              formulas: ['Daily App Use % = (lounges active on all days / total lounges) × 100'],
             }} />
 
           <KpiCard label="Total Babies" value={k.totalBaby ?? '—'} unit="admissions" accent="#8b5cf6" loading={loading.kpis}
             onDebug={setActiveDebugInfo} debugInfo={{
               title: 'Total Babies',
-              sourceTable: 'babyAdmission',
-              appliedLogic: 'Count of distinct baby admission records (status = 1) whose admissionDateTime falls within the selected date range.',
+              sourceTable: 'babyAdmission, loungeMaster',
+              appliedLogic: 'Count of distinct baby admission records (status IN 1,2) whose admissionDateTime falls within the selected date range.',
               queryLogic: `SELECT COUNT(DISTINCT ba.id) AS totalBaby
 FROM   babyAdmission ba
-JOIN   loungeMaster lm ON ba.loungeId  = lm.loungeId
-JOIN   facilitylist  f  ON lm.facilityId = f.FacilityID
-WHERE  f.Status = 1 AND lm.status = 1 AND lm.phase > 0
-  AND  ba.status = 1
+JOIN   loungeMaster lm ON ba.loungeId = lm.loungeId
+WHERE  lm.status = 1 AND lm.phase > 0
+  AND  ba.status IN (1, 2)
   AND  ba.admissionDateTime BETWEEN :startTs AND :endTs`,
               formulas: ['Total Babies = COUNT(DISTINCT babyAdmission.id)'],
             }} />
@@ -491,16 +488,15 @@ WHERE  f.Status = 1 AND lm.status = 1 AND lm.phase > 0
           <KpiCard label="LBW Admitted" value={k.lbwAdmitted ?? '—'} unit="LBW babies" accent="#f59e0b" loading={loading.kpis}
             onDebug={setActiveDebugInfo} debugInfo={{
               title: 'LBW Admitted',
-              sourceTable: 'babyAdmission, babyRegistration',
-              appliedLogic: 'Count of admitted babies whose recorded birth weight is < 2500 g and birthWeightAvailable = "Yes" in babyRegistration.',
-              queryLogic: `SELECT COUNT(DISTINCT CASE
-  WHEN ba.admissionDateTime BETWEEN :startTs AND :endTs THEN ba.id END) AS lbwAdmitted
+              sourceTable: 'babyAdmission, babyRegistration, loungeMaster',
+              appliedLogic: 'Count of babies (status IN 1,2) admitted in the period whose birth weight is < 2500 g and birthWeightAvailable = "Yes" in babyRegistration.',
+              queryLogic: `SELECT COUNT(DISTINCT ba.id) AS lbwAdmitted
 FROM   babyAdmission ba
 JOIN   babyRegistration br ON ba.babyId  = br.babyId
 JOIN   loungeMaster lm     ON ba.loungeId = lm.loungeId
-JOIN   facilitylist  f     ON lm.facilityId = f.FacilityID
-WHERE  f.Status = 1 AND lm.status = 1 AND lm.phase > 0
+WHERE  lm.status = 1 AND lm.phase > 0
   AND  ba.status IN (1, 2)
+  AND  ba.admissionDateTime BETWEEN :startTs AND :endTs
   AND  br.babyWeight < 2500
   AND  br.birthWeightAvailable = 'Yes'`,
               formulas: ['LBW Admitted = COUNT(DISTINCT ba.id) WHERE br.babyWeight < 2500'],
@@ -509,21 +505,18 @@ WHERE  f.Status = 1 AND lm.status = 1 AND lm.phase > 0
           <KpiCard label="LBW Discharged" value={k.lbwDischarged ?? '—'} unit="LBW babies" accent="#10b981" loading={loading.kpis}
             onDebug={setActiveDebugInfo} debugInfo={{
               title: 'LBW Discharged',
-              sourceTable: 'babyAdmission, babyRegistration',
-              appliedLogic: 'Among LBW admissions (birth weight < 2500 g), count those with a non-null dateOfDischarge recorded during the period.',
-              queryLogic: `SELECT COUNT(DISTINCT CASE
-  WHEN ba.status = 2
-    AND ba.dateOfDischarge BETWEEN :startTs AND :endTs
-  THEN ba.id END) AS lbwDischarged
+              sourceTable: 'babyAdmission, babyRegistration, loungeMaster',
+              appliedLogic: 'Among LBW babies (birth weight < 2500 g), count those discharged (status = 2) whose dateOfDischarge falls within the period.',
+              queryLogic: `SELECT COUNT(DISTINCT ba.id) AS lbwDischarged
 FROM   babyAdmission ba
 JOIN   babyRegistration br ON ba.babyId  = br.babyId
 JOIN   loungeMaster lm     ON ba.loungeId = lm.loungeId
-JOIN   facilitylist  f     ON lm.facilityId = f.FacilityID
-WHERE  f.Status = 1 AND lm.status = 1 AND lm.phase > 0
-  AND  ba.status IN (1, 2)
+WHERE  lm.status = 1 AND lm.phase > 0
+  AND  ba.status = 2
+  AND  ba.dateOfDischarge BETWEEN :startTs AND :endTs
   AND  br.babyWeight < 2500
   AND  br.birthWeightAvailable = 'Yes'`,
-              formulas: ['LBW Discharged = COUNT(DISTINCT ba.id) WHERE dateOfDischarge IS NOT NULL AND br.babyWeight < 2500'],
+              formulas: ['LBW Discharged = COUNT(DISTINCT ba.id) WHERE ba.status = 2 AND br.babyWeight < 2500'],
             }} />
 
           <KpiCard
