@@ -1,6 +1,7 @@
 const pool = require('../config/db');
 
-const NON_EXCL_METHODS = JSON.stringify(['3','4','5','6','7','8','9','10','11','12','13','14','15']);
+// MySQL 5.7-compatible REGEXP alternative to JSON_OVERLAPS for non-exclusive BF methods
+const NON_EXCL_REGEXP = '"(3|4|5|6|7|8|9|10|11|12|13|14|15)"';
 
 // mysql2 returns SUM/COUNT results as strings for DECIMAL columns; coerce to number
 const n = x => Number(x) || 0;
@@ -240,7 +241,7 @@ exports.getKpiSummary = async (req, res) => {
         SELECT ba.id,
           SUM(CASE WHEN bdn.breastFeedMethod IS NOT NULL
             AND bdn.breastFeedMethod NOT IN ('null', '[]', '')
-            AND JSON_OVERLAPS(bdn.breastFeedMethod, ?) THEN 1 ELSE 0 END) AS non_excl,
+            AND bdn.breastFeedMethod REGEXP '${NON_EXCL_REGEXP}' THEN 1 ELSE 0 END) AS non_excl,
           SUM(CASE WHEN bdn.breastFeedMethod IS NOT NULL
             AND bdn.breastFeedMethod NOT IN ('null', '[]', '')
             THEN 1 ELSE 0 END) AS rec_count
@@ -251,7 +252,7 @@ exports.getKpiSummary = async (req, res) => {
           AND ba.dateOfDischarge BETWEEN ? AND ?
         GROUP BY ba.id
       ) t
-    `, [NON_EXCL_METHODS, ...lmVals, startTs, endTs]);
+    `, [...lmVals, startTs, endTs]);
 
     // 6. Weight Gain/Stable — status=2, discharged in period
     const [wsRows] = await pool.query(`
@@ -447,7 +448,7 @@ exports.getFacilityMatrix = async (req, res) => {
         SELECT lm.facilityId, ba.id,
           SUM(CASE WHEN bdn.breastFeedMethod IS NOT NULL
             AND bdn.breastFeedMethod NOT IN ('null', '[]', '')
-            AND JSON_OVERLAPS(bdn.breastFeedMethod, ?) THEN 1 ELSE 0 END) AS non_excl,
+            AND bdn.breastFeedMethod REGEXP '${NON_EXCL_REGEXP}' THEN 1 ELSE 0 END) AS non_excl,
           SUM(CASE WHEN bdn.breastFeedMethod IS NOT NULL
             AND bdn.breastFeedMethod NOT IN ('null', '[]', '')
             THEN 1 ELSE 0 END) AS rec_count
@@ -458,7 +459,7 @@ exports.getFacilityMatrix = async (req, res) => {
         GROUP BY lm.facilityId, ba.id
       ) t
       GROUP BY facilityId
-    `, [NON_EXCL_METHODS, facIds, startTs, endTs]);
+    `, [facIds, startTs, endTs]);
 
     // 6. Weight Gain/Stable — status=2, discharged in period
     const [wsRows] = await pool.query(`

@@ -604,8 +604,7 @@ FROM (
   SELECT ba.id,
     SUM(CASE WHEN bdn.breastFeedMethod IS NOT NULL
       AND bdn.breastFeedMethod NOT IN ('null', '[]', '')
-      AND JSON_OVERLAPS(bdn.breastFeedMethod,
-        '["3","4","5","6","7","8","9","10","11","12","13","14","15"]')
+      AND bdn.breastFeedMethod REGEXP '"(3|4|5|6|7|8|9|10|11|12|13|14|15)"'
       THEN 1 ELSE 0 END) AS non_excl,
     SUM(CASE WHEN bdn.breastFeedMethod IS NOT NULL
       AND bdn.breastFeedMethod NOT IN ('null', '[]', '')
