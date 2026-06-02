@@ -23,6 +23,10 @@ const DEFAULT_VISIBILITY = {
   breastfeeding:   true,
   nurseLounge:     true,
   nurseMatrix:     true,
+  // Feature toggles (shared across dashboards)
+  geminiInsights:  true,
+  weeklyAnalysis:  true,
+  debugIcons:      true,
 };
 
 function loadVisibility() {

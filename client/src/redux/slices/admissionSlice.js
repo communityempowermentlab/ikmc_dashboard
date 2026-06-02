@@ -113,6 +113,19 @@ export const fetchBreastfeeding = createAsyncThunk(
   }
 );
 
+export const fetchDashboardInsights = createAsyncThunk(
+  'admissions/fetchDashboardInsights',
+  async (payload, { rejectWithValue }) => {
+    try {
+      const res = await axios.post(`${API_URL}/v1/admissions/generateInsights`, payload);
+      return res.data.insights;
+    } catch (err) {
+      const msg = err.response?.data?.error || err.message || 'Failed to generate insights';
+      return rejectWithValue(msg);
+    }
+  }
+);
+
 const admissionSlice = createSlice({
   name: 'admissions',
   initialState: {
@@ -129,11 +142,13 @@ const admissionSlice = createSlice({
     stayDuration:    null,
     weightStability: null,
     breastfeeding:   null,
+    dashboardInsights: null,
+    insightsError:     null,
     loading: {
       kpi: false, trend: false, composition: false, birthWeight: false,
       discharge: false, earlyCare: false, transport: false, kmcDuration: false,
       gender: false, summary: false, stayDuration: false,
-      weightStability: false, breastfeeding: false,
+      weightStability: false, breastfeeding: false, insights: false,
     },
     error: null,
   },
@@ -190,7 +205,11 @@ const admissionSlice = createSlice({
 
       .addCase(fetchBreastfeeding.pending,   (s) => { s.loading.breastfeeding = true;  s.error = null; })
       .addCase(fetchBreastfeeding.fulfilled, (s, a) => { s.loading.breastfeeding = false; s.breastfeeding = a.payload; })
-      .addCase(fetchBreastfeeding.rejected,  (s, a) => { s.loading.breastfeeding = false; s.error = a.error.message; });
+      .addCase(fetchBreastfeeding.rejected,  (s, a) => { s.loading.breastfeeding = false; s.error = a.error.message; })
+
+      .addCase(fetchDashboardInsights.pending,   (s) => { s.loading.insights = true;  s.dashboardInsights = null; s.insightsError = null; })
+      .addCase(fetchDashboardInsights.fulfilled, (s, a) => { s.loading.insights = false; s.dashboardInsights = a.payload; })
+      .addCase(fetchDashboardInsights.rejected,  (s, a) => { s.loading.insights = false; s.insightsError = a.payload || a.error.message; });
   },
 });
 

@@ -16,5 +16,6 @@ router.get('/transport',   admissionController.getTransportKpi);
 router.get('/kmcDuration', admissionController.getKmcDurationTrend);
 router.get('/gender',      admissionController.getGenderComposition);
 router.get('/summary',     admissionController.getSummaryTable);
+router.post('/generateInsights', admissionController.generateInsights);
 
 module.exports = router;

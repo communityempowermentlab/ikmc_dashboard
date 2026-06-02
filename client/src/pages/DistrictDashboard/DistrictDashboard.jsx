@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
+import usePageMeta from '../../hooks/usePageMeta';
 import { Link } from 'react-router-dom';
 import html2canvas from 'html2canvas';
 import {
@@ -120,6 +121,13 @@ function computeInsights(mat, kpis) {
 export default function DistrictDashboard() {
   const dispatch = useDispatch();
   const { filterOptions, kpis, matrix, weeklyInsights, insightsError, loading } = useSelector(s => s.district);
+  const { weeklyAnalysis: showWeeklyAnalysis, debugIcons: showDebugIcons } = useSelector(s => s.filters?.visibility ?? {});
+
+  usePageMeta({
+    title:       'District Weekly Performance — iKMC Programme',
+    description: 'District-level weekly performance dashboard for the iKMC Programme — facility matrix, daily app compliance, LBW admissions, clinical KPIs, and AI-generated Hindi insights.',
+    keywords:    'iKMC, district dashboard, KMC, facility performance, weekly report, LBW, CEL, ICMR',
+  });
 
   // Independent local filter state (arrays = multi-select) — does NOT share with main dashboard
   const [selStateIds,    setSelStateIds]    = useState([]);
@@ -562,26 +570,30 @@ WHERE  lm.status = 1 AND lm.phase > 0
             accent="#3b82f6" loading={loading.kpis}
             onDebug={setActiveDebugInfo} debugInfo={{
               title: '48-Hour Stay',
-              sourceTable: 'babyAdmission, loungeMaster',
-              appliedLogic: 'Discharged babies (status=2) whose dateOfDischarge falls in the period. stay48 = those where TIMESTAMPDIFF(admissionDateTime → dateOfDischarge) ≥ 48h. stayEligible = all discharged in period.',
+              sourceTable: 'babyAdmission, babyRegistration, loungeMaster',
+              appliedLogic: 'LBW discharged babies (babyWeight < 2500g, status=2) whose dateOfDischarge falls in the period. stay48 = those where TIMESTAMPDIFF(admissionDateTime → dateOfDischarge) ≥ 48h. stayEligible = all LBW discharged in period.',
               queryLogic: `-- stay48
 SELECT COUNT(DISTINCT ba.id) AS stay48
 FROM   babyAdmission ba
+JOIN   babyRegistration br ON ba.babyId = br.babyId
 JOIN   loungeMaster lm ON ba.loungeId = lm.loungeId
 WHERE  lm.status = 1 AND lm.phase > 0
   AND  ba.status = 2
   AND  ba.dateOfDischarge BETWEEN :startTs AND :endTs
   AND  TIMESTAMPDIFF(HOUR, ba.admissionDateTime, ba.dateOfDischarge) >= 48
+  AND  br.babyWeight < 2500 AND br.birthWeightAvailable = 'Yes'
 
 -- stayEligible
 SELECT COUNT(DISTINCT ba.id) AS stayEligible
 FROM   babyAdmission ba
+JOIN   babyRegistration br ON ba.babyId = br.babyId
 JOIN   loungeMaster lm ON ba.loungeId = lm.loungeId
 WHERE  lm.status = 1 AND lm.phase > 0
   AND  ba.status = 2
-  AND  ba.dateOfDischarge BETWEEN :startTs AND :endTs`,
+  AND  ba.dateOfDischarge BETWEEN :startTs AND :endTs
+  AND  br.babyWeight < 2500 AND br.birthWeightAvailable = 'Yes'`,
               formulas: [
-                '48h Stay Count = discharged babies where TIMESTAMPDIFF(admissionDateTime → dateOfDischarge) ≥ 48h',
+                '48h Stay Count = LBW discharged babies where TIMESTAMPDIFF(admissionDateTime → dateOfDischarge) ≥ 48h',
                 '48h Stay % = (stay48 / stayEligible) × 100',
               ],
             }} />
@@ -592,8 +604,8 @@ WHERE  lm.status = 1 AND lm.phase > 0
             accent="#ec4899" loading={loading.kpis}
             onDebug={setActiveDebugInfo} debugInfo={{
               title: 'Exclusive Breastfeeding %',
-              sourceTable: 'babyAdmission, babyDailyNutrition',
-              appliedLogic: 'Exclusive BF evaluated only at discharge (status=2, dateOfDischarge in period). A baby is exclusive if all nutrition records use ONLY method 1 (Breastfeed) or 2 (Expressed BM). Only discharged babies with ≥1 nutrition record are counted.',
+              sourceTable: 'babyAdmission, babyDailyNutrition, babyRegistration, loungeMaster',
+              appliedLogic: 'LBW discharged babies (babyWeight < 2500g, status=2, dateOfDischarge in period). Exclusive if all nutrition records use ONLY method 1 (Breastfeed) or 2 (Expressed BM). Only babies with ≥1 nutrition record are counted.',
               queryLogic: `-- Exclusive BF = breastFeedMethod contains ONLY method 1 (Breastfeed) or 2 (Expressed BM)
 -- non_excl: records where method 3-15 (non-exclusive) is present
 -- rec_count: only records with a valid, non-null, non-empty breastFeedMethod
@@ -611,10 +623,12 @@ FROM (
       THEN 1 ELSE 0 END) AS rec_count
   FROM   babyAdmission ba
   JOIN   babyDailyNutrition bdn ON bdn.babyAdmissionId = ba.id
+  JOIN   babyRegistration br ON ba.babyId = br.babyId
   JOIN   loungeMaster lm ON ba.loungeId = lm.loungeId
   WHERE  lm.status = 1 AND lm.phase > 0
     AND  ba.status = 2
     AND  ba.dateOfDischarge BETWEEN :startTs AND :endTs
+    AND  br.babyWeight < 2500 AND br.birthWeightAvailable = 'Yes'
   GROUP  BY ba.id
 ) t`,
               formulas: ['Exclusive BF % = (babies with no non-exclusive BF method / total babies with BF records) × 100'],
@@ -681,20 +695,6 @@ FROM (
               ],
             }} />
 
-          <KpiCard label="Total Mothers" value={k.totalMothers ?? '—'} unit="admissions" accent="#a855f7" loading={loading.kpis}
-            onDebug={setActiveDebugInfo} debugInfo={{
-              title: 'Total Mothers',
-              sourceTable: 'motherAdmission',
-              appliedLogic: 'Count of distinct mother admission records (status = 1) whose addDate falls within the selected date range.',
-              queryLogic: `SELECT COUNT(DISTINCT ma.id) AS totalMothers
-FROM   motherAdmission ma
-JOIN   loungeMaster lm ON ma.loungeId  = lm.loungeId
-JOIN   facilitylist  f  ON lm.facilityId = f.FacilityID
-WHERE  f.Status = 1 AND lm.status = 1 AND lm.phase > 0
-  AND  ma.status = 1
-  AND  ma.addDate BETWEEN :startTs AND :endTs`,
-              formulas: ['Total Mothers = COUNT(DISTINCT motherAdmission.id)'],
-            }} />
         </section>
 
         {/* ── Facility Matrix ─────────────────────────────────────────────── */}
@@ -756,14 +756,13 @@ GROUP  BY lm.loungeId, dt
                           </th>
                         );
                       })}
+                      <th className="dd-th-kpi">Total Baby</th>
                       <th className="dd-th-kpi">LBW Admission</th>
                       <th className="dd-th-kpi">LBW Discharge</th>
                       <th className="dd-th-kpi">48h Stay</th>
                       <th className="dd-th-kpi">Exclusive BF</th>
                       <th className="dd-th-kpi">Weight Gain/Stable</th>
-                      <th className="dd-th-kpi">Total Baby</th>
                       <th className="dd-th-kpi">Baby Ass.</th>
-                      <th className="dd-th-kpi">Total Mother</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -786,14 +785,13 @@ GROUP  BY lm.loungeId, dt
                           </td>
                         ))}
 
+                        <td className="dd-td-kpi">{fac.totalBaby}</td>
                         <td className="dd-td-kpi">{fac.lbwAdmitted}</td>
                         <td className="dd-td-kpi">{fac.lbwDischarged}</td>
                         <td className="dd-td-kpi">{fac.stay48}</td>
                         <td className="dd-td-kpi">{fac.bfPct  != null ? `${fac.bfPct}%`  : '—'}</td>
                         <td className="dd-td-kpi">{fac.gsPct  != null ? `${fac.gsPct}%`  : '—'}</td>
-                        <td className="dd-td-kpi">{fac.totalBaby}</td>
                         <td className="dd-td-kpi">{fac.assessed}</td>
-                        <td className="dd-td-kpi">{fac.totalMothers}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -815,7 +813,7 @@ GROUP  BY lm.loungeId, dt
         </section>
 
         {/* ── Weekly Insights (Gemini — Hindi) ─────────────────────────── */}
-        {!loading.kpis && !loading.matrix && (
+        {!loading.kpis && !loading.matrix && showWeeklyAnalysis !== false && (
           <section className="dd-insights-section">
             <div className="dd-insights-header">
               <span className="dd-insights-title">

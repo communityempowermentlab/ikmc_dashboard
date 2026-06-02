@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
+import usePageMeta from '../../hooks/usePageMeta';
 import Chart from 'chart.js/auto';
 import HeaderFilters from '../../components/common/HeaderFilters';
 import {
@@ -16,6 +17,7 @@ import {
   fetchStayDuration,
   fetchWeightStability,
   fetchBreastfeeding,
+  fetchDashboardInsights,
 } from '../../redux/slices/admissionSlice';
 import {
   fetchLoungePerformance,
@@ -89,6 +91,7 @@ const Dashboard = () => {
   const bfChartRef           = useRef(null);
   const nurseTrendChartRef   = useRef(null);
   const nurseMonthlyChartRef = useRef(null);
+  const nmScrollRef          = useRef(null);
 
   // Chart instance refs
   const admChartInstanceRef          = useRef(null);
@@ -104,6 +107,12 @@ const Dashboard = () => {
   const filtersState = useSelector(s => s.filters);
   const { selectedFacilities, selectedLounges, startDate, endDate, visibility } = filtersState;
 
+  usePageMeta({
+    title:       'iKMC Programme — Executive Dashboard',
+    description: 'iKMC Executive Dashboard — real-time monitoring of admissions, clinical KPIs, nurse performance, birth weight, discharge outcomes, and breastfeeding compliance.',
+    keywords:    'iKMC, KMC, Kangaroo Mother Care, newborn, LBW, NICU, CEL, ICMR, healthcare analytics',
+  });
+
   // Admission data
   const {
     kpi:          admKpi,
@@ -116,10 +125,12 @@ const Dashboard = () => {
     kmcDuration:  admKmcDuration,
     gender:       admGender,
     summaryTable: admSummary,
-    stayDuration:    admStayDuration,
-    weightStability: admWeightStability,
-    breastfeeding:   admBreastfeeding,
-    loading:         admLoading,
+    stayDuration:      admStayDuration,
+    weightStability:   admWeightStability,
+    breastfeeding:     admBreastfeeding,
+    dashboardInsights: admInsights,
+    insightsError:     admInsightsError,
+    loading:           admLoading,
   } = useSelector(s => s.admissions);
 
   const {
@@ -353,7 +364,7 @@ const Dashboard = () => {
     return () => { if (donutChartInstanceRef.current) { donutChartInstanceRef.current.destroy(); donutChartInstanceRef.current = null; } };
   }, [isDashboardLoading, admComp]);
 
-  // ── Stay Duration bar chart ───────────────────────────────────────────────
+  // ── Stay Duration horizontal bar chart ───────────────────────────────────
   useEffect(() => {
     if (stayChartInstanceRef.current) { stayChartInstanceRef.current.destroy(); stayChartInstanceRef.current = null; }
     if (isDashboardLoading || !stayChartRef.current || !admStayDuration?.categories?.length) return;
@@ -361,23 +372,59 @@ const Dashboard = () => {
     const cats   = admStayDuration.categories;
     const labels = cats.map(c => c.label);
     const counts = cats.map(c => c.count);
-    const gridColor = 'rgba(0,0,0,0.06)', tickColor = '#9ca3af';
+    const gridColor = 'rgba(0,0,0,0.05)';
+
+    // Inline plugin — draws "count  pct%" to the right of each bar
+    const stayLabelsPlugin = {
+      id: 'stayLabels',
+      afterDatasetsDraw(chart) {
+        const { ctx } = chart;
+        const meta = chart.getDatasetMeta(0);
+        meta.data.forEach((bar, i) => {
+          const cat  = cats[i];
+          const x    = bar.x + 10;
+          const y    = bar.y;
+          const countStr = cat.count.toLocaleString();
+          const pctStr   = `${cat.pct}%`;
+
+          ctx.save();
+          ctx.textBaseline = 'middle';
+
+          // bold count
+          ctx.font = 'bold 13px Inter, system-ui, sans-serif';
+          ctx.fillStyle = '#111827';
+          ctx.textAlign = 'left';
+          ctx.fillText(countStr, x, y);
+
+          // colored pct
+          const countW = ctx.measureText(countStr).width;
+          ctx.font = '600 12px Inter, system-ui, sans-serif';
+          ctx.fillStyle = STAY_COLORS[i];
+          ctx.fillText(`  ${pctStr}`, x + countW, y);
+          ctx.restore();
+        });
+      }
+    };
 
     stayChartInstanceRef.current = new Chart(stayChartRef.current, {
       type: 'bar',
+      plugins: [stayLabelsPlugin],
       data: {
         labels,
         datasets: [{
-          label: 'Babies',
           data: counts,
           backgroundColor: STAY_COLORS,
-          borderRadius: 6,
-          borderWidth: 0,
+          borderRadius: 8,
+          borderSkipped: false,
+          barPercentage: 0.5,
+          categoryPercentage: 0.85,
         }]
       },
       options: {
-        responsive: true, maintainAspectRatio: false,
-        layout: { padding: { top: 16 } },
+        indexAxis: 'y',
+        responsive: true,
+        maintainAspectRatio: false,
+        layout: { padding: { right: 90, top: 10, bottom: 4 } },
         plugins: {
           legend: { display: false },
           tooltip: {
@@ -390,8 +437,17 @@ const Dashboard = () => {
           }
         },
         scales: {
-          x: { ticks: { color: tickColor }, grid: { display: false }, border: { display: false } },
-          y: { ticks: { color: tickColor }, grid: { color: gridColor }, border: { display: false }, min: 0 }
+          x: {
+            grid: { color: gridColor },
+            border: { display: false },
+            ticks: { color: '#9ca3af', font: { size: 11 } },
+            beginAtZero: true,
+          },
+          y: {
+            grid: { display: false },
+            border: { display: false },
+            ticks: { color: '#374151', font: { size: 12.5, weight: '600' } },
+          }
         }
       }
     });
@@ -727,6 +783,23 @@ const Dashboard = () => {
     return list.sort((a, b) => order[a.type] - order[b.type] || a.priority - b.priority);
   }, [admKpi, admDischarge, admBw, admEarlyCare, admComp, admTrend]);
 
+  // ── Gemini Hindi insights — fire once key data is available ─────────────
+  useEffect(() => {
+    if (!admKpi || !admDischarge || !admEarlyCare) return;
+    const filtersReady = filtersState?.selectedFacilityIds?.length > 0
+      || filtersState?.startDate;
+    if (!filtersReady) return;
+    dispatch(fetchDashboardInsights({
+      kpi:          admKpi,
+      composition:  admComp,
+      discharge:    admDischarge,
+      birthWeight:  admBw,
+      earlyCare:    admEarlyCare,
+      stayDuration: admStayDuration,
+      period:       { start: filtersState?.startDate, end: filtersState?.endDate },
+    }));
+  }, [admKpi, admDischarge, admEarlyCare, dispatch]);
+
   // Filtered insight list (shared by both desktop ticker and mobile rotator)
   const filteredInsights = useMemo(
     () => insightFilter ? insights.filter(i => i.type === insightFilter) : insights,
@@ -887,7 +960,7 @@ const Dashboard = () => {
       })()}
 
       {/* MAIN */}
-      <div className="main">
+      <div className="main" data-print-date={new Date().toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}>
         {isDashboardLoading ? (
           <div className="dashboard-skeleton">
             <div className="skel-row-1"><div className="skel-box" style={{height:'100px'}}></div></div>
@@ -1643,7 +1716,7 @@ ORDER  BY ba.typeOfDischarge`,
             </div>}
 
             {/* ROW 7: Executive Summary Analytics Table */}
-            {visibility.executiveSummary !== false && <div className="card est-card">
+            {visibility.executiveSummary !== false && <div className="card est-card no-print">
               <div className="est-header">
                 <div>
                   <div className="card-title" style={{marginBottom:'2px'}}>
@@ -1916,27 +1989,12 @@ GROUP  BY mKey ORDER BY mKey
             {/* ROW 8: Stay Duration Analytics */}
             {visibility.stayDuration !== false && <div>
               <div className="section-label">Stay Duration Analytics — {sectionLabel}</div>
-              <div className="stay-kpi-grid">
-                {admLoading.stayDuration
-                  ? [0,1,2,3].map(i => <div key={i} className="stay-kpi-card stay-kpi-loading" />)
-                  : admStayDuration?.categories?.map((cat, i) => (
-                    <div key={cat.key} className="stay-kpi-card" style={{'--stay-color': STAY_COLORS[i]}}>
-                      <div className="stay-cat-label">{cat.label}</div>
-                      <div className="stay-cat-count">{cat.count.toLocaleString()}</div>
-                      <div className="stay-cat-pct" style={{color: STAY_COLORS[i]}}>{cat.pct}%</div>
-                      <div className="stay-cat-bar-track">
-                        <div className="stay-cat-bar-fill" style={{width: cat.pct + '%', background: STAY_COLORS[i]}} />
-                      </div>
-                      <div className="stay-cat-sub">
-                        of {admStayDuration.total.toLocaleString()} total babies
-                      </div>
-                    </div>
-                  ))
-                }
-              </div>
-              <div className="card" style={{marginTop:'16px'}}>
+              <div className="card">
                 <div className="card-title">
                   Stay Duration Distribution
+                  {admStayDuration?.total > 0 && (
+                    <span className="stay-title-total">{admStayDuration.total.toLocaleString()} babies</span>
+                  )}
                   <DebugIcon onClick={setActiveDebugInfo} info={{
                     title: 'Stay Duration Distribution',
                     sourceTable: 'babyAdmission',
@@ -1963,17 +2021,55 @@ GROUP  BY category`,
                     formulas: ['Stay Hours = TIMESTAMPDIFF(HOUR, admissionDateTime, COALESCE(dateOfDischarge, NOW()))']
                   }} />
                 </div>
-                {admLoading.stayDuration && (
-                  <div className="adm-chart-overlay" style={{position:'relative',height:'200px'}}>Loading stay data…</div>
-                )}
-                {!admLoading.stayDuration && !admStayDuration?.total && (
-                  <div className="adm-chart-overlay" style={{position:'relative',height:'200px'}}>No stay duration data for selected period</div>
-                )}
-                {!admLoading.stayDuration && admStayDuration?.total > 0 && (
-                  <div className="chart-wrap chart-fill" style={{minHeight:'200px'}}>
-                    <canvas ref={stayChartRef} role="img" aria-label="Stay duration distribution chart" />
+
+                {admLoading.stayDuration ? (
+                  <div className="sd-cards">
+                    {[0,1,2,3].map(i => <div key={i} className="sd-card-loading" />)}
                   </div>
-                )}
+                ) : admStayDuration?.categories?.length > 0 && (() => {
+                  const cats  = admStayDuration.categories;
+                  const tags  = ['Short Stay','Standard','Extended','Long Stay'];
+                  const total = admStayDuration.total;
+                  return (
+                    <>
+                      <div className="sd-cards">
+                        {cats.map((cat, i) => (
+                          <div key={cat.key} className="sd-card" style={{'--c': STAY_COLORS[i]}}>
+                            <div className="sd-card-stripe" />
+                            <div className="sd-card-body">
+                              <div className="sd-card-tag">{tags[i]}</div>
+                              <div className="sd-card-count">{cat.count.toLocaleString()}</div>
+                              <div className="sd-card-label">{cat.label}</div>
+                              <div className="sd-card-bar-track">
+                                <div className="sd-card-bar-fill" style={{width: cat.pct + '%'}} />
+                              </div>
+                              <div className="sd-card-pct" style={{color: 'var(--c)'}}>{cat.pct}%</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="sd-stack">
+                        {cats.map((cat, i) => (
+                          <div key={cat.key} className="sd-stack-seg"
+                            style={{flex: cat.count, background: STAY_COLORS[i]}}
+                            title={`${cat.label}: ${cat.count} (${cat.pct}%)`}
+                          />
+                        ))}
+                      </div>
+                      <div className="sd-footer">
+                        <span className="sd-total">{total.toLocaleString()} babies total</span>
+                        <div className="sd-legend">
+                          {cats.map((cat, i) => (
+                            <span key={cat.key} className="sd-leg">
+                              <span style={{background: STAY_COLORS[i]}} className="sd-leg-dot"/>
+                              {cat.label}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
             </div>}
 
@@ -2297,7 +2393,7 @@ ORDER  BY dt`,
 
             {/* ROW 12: Nurse-wise Attendance Matrix */}
             {visibility.nurseMatrix !== false && (
-              <div>
+              <div className="no-print">
                 <div className="section-label">Nurse-wise Attendance Matrix — {sectionLabel}</div>
                 <div className="card">
                   <div className="card-title">
@@ -2335,22 +2431,25 @@ ORDER  BY sm.name, dt`,
                     <div className="adm-chart-overlay" style={{position:'relative',height:'180px'}}>No nurse check-in data for selected period</div>
                   )}
                   {!nurseLoading.attendanceMatrix && nurseMatrix?.nurses?.length > 0 && (() => {
-                    const { dates, nurses, totalDays: matrixDays } = nurseMatrix;
+                    const { dates: rawDates, nurses, totalDays: matrixDays } = nurseMatrix;
+                    // Sort descending: latest date leftmost (first visible by default)
+                    const dates = [...rawDates].sort((a, b) => b.localeCompare(a));
                     const presentSet = (n) => new Set(n.presentDates);
                     return (
                       <div className="nm-wrap">
-                        <div className="nm-scroll">
+                        <div className="nm-scroll" ref={nmScrollRef}>
                           <table className="nm-table">
                             <thead>
                               <tr>
                                 <th className="nm-th-name">Nurse</th>
-                                <th className="nm-th-stat">Present</th>
-                                <th className="nm-th-stat">Absent</th>
-                                <th className="nm-th-stat">Att%</th>
-                                {dates.map(d => {
-                                  const dt = new Date(d + 'T12:00:00Z');
+                                <th className="nm-th-stat nm-col-present">Present</th>
+                                <th className="nm-th-stat nm-col-absent">Absent</th>
+                                <th className="nm-th-stat nm-col-att">Att%</th>
+                                {dates.map((d, idx) => {
+                                  const dt      = new Date(d + 'T12:00:00Z');
+                                  const isFirst = idx === 0;
                                   return (
-                                    <th key={d} className="nm-th-day" title={d}>
+                                    <th key={d} className={`nm-th-day${isFirst ? ' nm-th-latest' : ''}`} title={d}>
                                       <div>{dt.getUTCDate()}</div>
                                       <div className="nm-th-mo">{MONTH_SHORT[dt.getUTCMonth()]}</div>
                                     </th>
@@ -2365,11 +2464,12 @@ ORDER  BY sm.name, dt`,
                                 return (
                                   <tr key={nurse.nurseId} className="nm-row">
                                     <td className="nm-td-name">{nurse.name}</td>
-                                    <td className="nm-td-stat nm-present-count">{nurse.presentCount}</td>
-                                    <td className="nm-td-stat nm-absent-count">{nurse.absentCount}</td>
-                                    <td className="nm-td-stat" style={{color: pctColor, fontWeight: 700}}>{nurse.pct}%</td>
-                                    {dates.map(d => (
-                                      <td key={d} className={`nm-cell ${ps.has(d) ? 'nm-present' : 'nm-absent'}`}
+                                    <td className="nm-td-stat nm-col-present nm-present-count">{nurse.presentCount}</td>
+                                    <td className="nm-td-stat nm-col-absent nm-absent-count">{nurse.absentCount}</td>
+                                    <td className="nm-td-stat nm-col-att" style={{color: pctColor, fontWeight: 700}}>{nurse.pct}%</td>
+                                    {dates.map((d, idx) => (
+                                      <td key={d}
+                                        className={`nm-cell ${ps.has(d) ? 'nm-present' : 'nm-absent'}${idx === 0 ? ' nm-cell-latest' : ''}`}
                                         title={ps.has(d) ? `${nurse.name} — Present on ${d}` : `${nurse.name} — Absent on ${d}`}
                                       >
                                         {ps.has(d) ? '✓' : '✕'}
@@ -2395,6 +2495,51 @@ ORDER  BY sm.name, dt`,
 
           </>
         )}
+
+        {/* ── Gemini Hindi Insights ─────────────────────────────────────── */}
+        {visibility.geminiInsights !== false && <div className="gemini-insights-section no-print">
+          <div className="gemini-insights-header">
+            <span className="gemini-insights-title">
+              <span className="gemini-spark">✦</span>
+              विश्लेषण
+              <span className="gemini-badge">Gemini</span>
+            </span>
+            {admInsights?.length > 0 && (
+              <button
+                className="gemini-dismiss-all"
+                onClick={() => dispatch({ type: 'admissions/clearInsights' })}
+              >
+                सभी हटाएं
+              </button>
+            )}
+          </div>
+
+          {admLoading.insights && (
+            <div className="gemini-loading">
+              <div className="gemini-spinner" />
+              <GeminiLoadingDots />
+            </div>
+          )}
+
+          {!admLoading.insights && admInsightsError && (
+            <div className="gemini-error">
+              ⚠️ <strong>Gemini Error:</strong> {admInsightsError}
+            </div>
+          )}
+
+          {!admLoading.insights && admInsights?.length > 0 && (
+            <div className="gemini-grid">
+              {admInsights.map((ins, i) => (
+                <div key={i} className={`gemini-card gemini-${ins.type || 'info'}`}>
+                  <div className="gemini-card-icon">
+                    <GeminiInsightIcon type={ins.type || 'info'} />
+                  </div>
+                  <p className="gemini-card-text">{ins.text}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>}
 
         <div className="footer">
           Data source: iKMC Application &nbsp;·&nbsp; Last updated: 23 May 2025, 08:00 IST &nbsp;·&nbsp;
@@ -2422,3 +2567,39 @@ ORDER  BY sm.name, dt`,
 };
 
 export default Dashboard;
+
+function GeminiLoadingDots() {
+  const [dot, setDot] = React.useState(0);
+  React.useEffect(() => {
+    const t = setInterval(() => setDot(d => (d + 1) % 4), 500);
+    return () => clearInterval(t);
+  }, []);
+  const msgs = ['डेटा का विश्लेषण हो रहा है', 'अंतर्दृष्टि तैयार की जा रही है', 'कृपया प्रतीक्षा करें', 'Gemini सोच रहा है'];
+  return (
+    <span>{msgs[dot % msgs.length]}<span style={{letterSpacing:2, marginLeft:2}}>{'•'.repeat((dot % 3) + 1)}</span></span>
+  );
+}
+
+function GeminiInsightIcon({ type }) {
+  const s = { width: 18, height: 18 };
+  if (type === 'positive') return (
+    <svg {...s} viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/>
+    </svg>
+  );
+  if (type === 'warning') return (
+    <svg {...s} viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+    </svg>
+  );
+  if (type === 'critical') return (
+    <svg {...s} viewBox="0 0 24 24" fill="none" stroke="#dc2626" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>
+    </svg>
+  );
+  return (
+    <svg {...s} viewBox="0 0 24 24" fill="none" stroke="#0369a1" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+    </svg>
+  );
+}

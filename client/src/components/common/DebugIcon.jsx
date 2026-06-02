@@ -1,17 +1,19 @@
 import React from 'react';
+import { useSelector } from 'react-redux';
 
 const DebugIcon = ({ info, onClick }) => {
-  // Only render if VITE_DEBUG_MODE is enabled
-  if (import.meta.env.VITE_DEBUG_MODE !== 'true') return null;
+  const debugIcons = useSelector(s => s.filters?.visibility?.debugIcons);
+
+  if (debugIcons === false) return null;
 
   return (
-    <button 
+    <button
       onClick={(e) => {
         e.stopPropagation();
         onClick(info);
       }}
       className="debug-icon-btn"
-      title="Settings / Info / Debug"
+      title="Validation & Debug Info"
       aria-label="Open validation debug panel"
     >
       ⚙

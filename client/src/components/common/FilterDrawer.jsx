@@ -26,6 +26,12 @@ const SECTION_LABELS = [
   { key: 'nurseMatrix',      label: 'Nurse Attendance Matrix' },
 ];
 
+const FEATURE_LABELS = [
+  { key: 'geminiInsights', label: '✦ AI विश्लेषण (Gemini)', desc: 'Main dashboard Hindi insights' },
+  { key: 'weeklyAnalysis', label: 'साप्ताहिक विश्लेषण',     desc: 'District dashboard weekly insights' },
+  { key: 'debugIcons',     label: '⚙ Validation & Debug Icons', desc: 'Show/hide settings icons on all cards' },
+];
+
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
 // ── Date Range Section ────────────────────────────────────────────────────────
@@ -215,6 +221,31 @@ const FilterDrawer = ({ isOpen, onClose }) => {
             onStartChange={setDraftStartDate}
             onEndChange={setDraftEndDate}
           />
+
+          {/* ── Feature Toggles ── */}
+          <div className="vis-wrap">
+            <div className="vis-header">
+              <span className="dr-section-label">Feature Toggles</span>
+            </div>
+            <div className="vis-feature-list">
+              {FEATURE_LABELS.map(({ key, label, desc }) => (
+                <label key={key} className="vis-feature-row">
+                  <div className="vis-feature-info">
+                    <span className="vis-feature-label">{label}</span>
+                    <span className="vis-feature-desc">{desc}</span>
+                  </div>
+                  <div
+                    className={`vis-pill ${visibility[key] !== false ? 'vis-pill-on' : 'vis-pill-off'}`}
+                    onClick={() => dispatch(toggleSectionVisibility(key))}
+                    role="switch"
+                    aria-checked={visibility[key] !== false}
+                  >
+                    <div className="vis-pill-thumb" />
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
 
           {/* ── Dashboard Section Visibility ── */}
           <div className="vis-wrap">

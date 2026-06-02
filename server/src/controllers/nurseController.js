@@ -156,7 +156,7 @@ exports.getAttendanceMatrix = async (req, res) => {
             params
         );
 
-        // Generate full date list for the range
+        // Generate full date list oldest-first (latest date = rightmost column)
         const dates = [];
         const cur = new Date(startDate + 'T00:00:00Z');
         const end = new Date(endDate   + 'T00:00:00Z');

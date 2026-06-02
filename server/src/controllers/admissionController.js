@@ -900,3 +900,89 @@ exports.getBreastfeeding = async (req, res) => {
         res.status(500).json({ error: 'Server error fetching breastfeeding data' });
     }
 };
+
+
+// POST /api/v1/admissions/generateInsights
+// Sends dashboard KPI summary to Gemini and returns Hindi insights
+exports.generateInsights = async (req, res) => {
+  try {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey || apiKey === 'your_google_gemini_api_key_here') {
+      return res.status(503).json({ error: 'GEMINI_API_KEY not configured in .env' });
+    }
+
+    const { kpi, composition, discharge, birthWeight, earlyCare, stayDuration, period } = req.body;
+
+    const prompt = `
+आप एक iKMC (Kangaroo Mother Care) कार्यक्रम के स्वास्थ्य डेटा विश्लेषक हैं।
+
+नीचे दिए गए डैशबोर्ड डेटा के आधार पर 6 महत्वपूर्ण अंतर्दृष्टि (insights) सरल हिंदी में तैयार करें।
+
+समयावधि: ${period?.start || 'N/A'} से ${period?.end || 'N/A'}
+
+भर्ती KPI:
+- वर्तमान अवधि में बच्चे: ${kpi?.current ?? 'N/A'}
+- पिछली अवधि में बच्चे: ${kpi?.previous ?? 'N/A'}
+- परिवर्तन: ${kpi?.direction === 'up' ? '+' : '-'}${kpi?.percentChange ?? 0}%
+
+बच्चों की संरचना:
+- अस्पताल में जन्मे (Inborn): ${composition?.inborn ?? 0}
+- बाहर से भेजे गए (Outborn): ${composition?.outborn ?? 0}
+- कुल: ${composition?.total ?? 0}
+
+छुट्टी परिणाम:
+- सामान्य छुट्टी: ${discharge?.categories?.find(c => c.label?.toLowerCase().includes('normal'))?.pct ?? 0}%
+- मृत्यु दर: ${discharge?.diedPct ?? 0}% (${discharge?.diedCount ?? 0} बच्चे)
+- LAMA दर: ${discharge?.lamaPct ?? 0}% (${discharge?.lamaCount ?? 0} बच्चे)
+- कुल छुट्टी: ${discharge?.totalDischarge ?? 0}
+
+जन्म भार:
+- VLBW (<1800g): ${birthWeight?.lt1800 ?? 0} बच्चे
+- LBW (1800-2499g): ${birthWeight?.btw1800_2499 ?? 0} बच्चे
+- सामान्य (≥2500g): ${birthWeight?.gte2500 ?? 0} बच्चे
+- कुल: ${birthWeight?.total ?? 0}
+
+प्रारंभिक देखभाल:
+- KMC शुरुआत: ${earlyCare?.kmc?.overallPct ?? 0}% (Inborn: ${earlyCare?.kmc?.inbornPct ?? 0}%, Outborn: ${earlyCare?.kmc?.outbornPct ?? 0}%)
+- स्तनपान शुरुआत: ${earlyCare?.bf?.overallPct ?? 0}% (Inborn: ${earlyCare?.bf?.inbornPct ?? 0}%, Outborn: ${earlyCare?.bf?.outbornPct ?? 0}%)
+
+रहने की अवधि:
+${(stayDuration?.categories || []).map(c => `- ${c.label}: ${c.count} बच्चे (${c.pct}%)`).join('\n')}
+
+निर्देश:
+- बिल्कुल 6 अंतर्दृष्टि दें।
+- सरल, स्पष्ट हिंदी में लिखें जो स्वास्थ्य कर्मी आसानी से समझ सकें।
+- संख्याओं का उपयोग करें जहाँ जरूरी हो।
+- अच्छे प्रदर्शन की सराहना और सुधार के क्षेत्र दोनों शामिल करें।
+
+केवल यह JSON array लौटाएं, कोई अन्य टेक्स्ट नहीं:
+[
+  {"type": "positive", "text": "हिंदी में अंतर्दृष्टि..."},
+  {"type": "warning",  "text": "हिंदी में अंतर्दृष्टि..."},
+  {"type": "critical", "text": "हिंदी में अंतर्दृष्टि..."},
+  {"type": "info",     "text": "हिंदी में अंतर्दृष्टि..."},
+  {"type": "positive", "text": "हिंदी में अंतर्दृष्टि..."},
+  {"type": "info",     "text": "हिंदी में अंतर्दृष्टि..."}
+]
+
+type के मान: "positive" (अच्छा), "warning" (ध्यान दें), "critical" (गंभीर), "info" (जानकारी)
+`;
+
+    const { GoogleGenerativeAI } = require('@google/generative-ai');
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+
+    const result = await model.generateContent(prompt);
+    const raw    = result.response.text().trim();
+
+    const jsonMatch = raw.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) throw new Error('Gemini response did not contain a JSON array');
+
+    const insights = JSON.parse(jsonMatch[0]);
+    res.json({ insights });
+
+  } catch (err) {
+    console.error('generateInsights (dashboard) error:', err.message);
+    res.status(500).json({ error: err.message || 'Failed to generate insights' });
+  }
+};
