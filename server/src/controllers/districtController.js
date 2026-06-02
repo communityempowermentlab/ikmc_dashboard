@@ -125,7 +125,7 @@ exports.getKpiSummary = async (req, res) => {
         JOIN loungeMaster lm ON ndc.loungeId = lm.loungeId
         JOIN facilitylist f ON lm.facilityId = f.FacilityID
         WHERE ${condStr} AND DATE(ndc.addDate) BETWEEN ? AND ?
-        GROUP BY lm.loungeId, lm.facilityId
+        GROUP BY lm.loungeId
         HAVING daysActive >= ?
       ) t
     `, [...values, start, end, totalDays]);
@@ -337,7 +337,7 @@ exports.getFacilityMatrix = async (req, res) => {
       JOIN loungeMaster lm ON ndc.loungeId = lm.loungeId
       WHERE lm.facilityId IN (?) AND lm.phase > 0
         AND DATE(ndc.addDate) BETWEEN ? AND ?
-      GROUP BY lm.loungeId, lm.facilityId, DATE_FORMAT(DATE(ndc.addDate), '%Y-%m-%d')
+      GROUP BY lm.loungeId, DATE_FORMAT(DATE(ndc.addDate), '%Y-%m-%d')
     `, [facIds, start, end]);
 
     const BA_JOIN = 'JOIN loungeMaster lm ON ba.loungeId = lm.loungeId AND lm.phase > 0';

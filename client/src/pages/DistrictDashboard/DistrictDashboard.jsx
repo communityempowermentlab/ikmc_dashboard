@@ -128,7 +128,6 @@ export default function DistrictDashboard() {
   const [startDate,      setStartDate]      = useState(sevenDaysAgoStr());
   const [endDate,        setEndDate]        = useState(todayStr());
   const [filtersReady,   setFiltersReady]   = useState(false);
-  const [dateError,      setDateError]      = useState(null);
 
   const [dismissedInsights, setDismissedInsights] = useState(new Set());
   const [activeDebugInfo,   setActiveDebugInfo]   = useState(null);
@@ -285,28 +284,15 @@ export default function DistrictDashboard() {
     return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
   };
 
-  // ── 7-day range handlers ───────────────────────────────────────────────────
-  // Inclusive count: 12-May → 18-May = 7 days (diff of 6 between endpoints)
+  // ── 7-day range handlers — gap is always exactly 7 days (inclusive) ────────
   const handleStartDateChange = (val) => {
-    const diff = utcDaysBetween(val, endDate);
-    if (diff > MAX_RANGE_DAYS - 1) {
-      setEndDate(utcAddDays(val, MAX_RANGE_DAYS - 1));
-      setDateError(`Range auto-capped to ${MAX_RANGE_DAYS} days.`);
-    } else {
-      setDateError(null);
-    }
     setStartDate(val);
+    setEndDate(utcAddDays(val, MAX_RANGE_DAYS - 1));
   };
 
   const handleEndDateChange = (val) => {
-    const diff = utcDaysBetween(startDate, val);
-    if (diff > MAX_RANGE_DAYS - 1) {
-      setStartDate(utcAddDays(val, -(MAX_RANGE_DAYS - 1)));
-      setDateError(`Range auto-capped to ${MAX_RANGE_DAYS} days.`);
-    } else {
-      setDateError(null);
-    }
     setEndDate(val);
+    setStartDate(utcAddDays(val, -(MAX_RANGE_DAYS - 1)));
   };
 
   const k   = kpis?.kpis   || {};
@@ -439,14 +425,6 @@ export default function DistrictDashboard() {
           />
         </FilterGroup>
 
-        {dateError && (
-          <div className="dd-date-error">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-            </svg>
-            {dateError}
-          </div>
-        )}
       </div>
 
       <div className="dd-body">
@@ -489,7 +467,7 @@ FROM (
     AND  lm.status = 1
     AND  lm.phase  > 0
     AND  DATE(ndc.addDate) BETWEEN :startDate AND :endDate
-  GROUP  BY lm.loungeId, lm.facilityId
+  GROUP  BY lm.loungeId
   HAVING daysActive >= :totalDays
 ) t`,
               formulas: ['Daily App Use % = (facilities active on all days / total facilities) × 100'],
@@ -713,7 +691,7 @@ JOIN   loungeMaster lm ON ndc.loungeId = lm.loungeId
 WHERE  lm.facilityId IN (:facilityIds)
   AND  lm.phase > 0
   AND  DATE(ndc.addDate) BETWEEN :startDate AND :endDate
-GROUP  BY lm.loungeId, lm.facilityId, dt
+GROUP  BY lm.loungeId, dt
 
 -- 6 additional parallel queries follow the same facilityId GROUP BY pattern:
 -- (2) babyAdmission totals + 48h stay
