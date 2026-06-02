@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { Link } from 'react-router-dom';
+import html2canvas from 'html2canvas';
 import {
   fetchDistrictFilters,
   fetchDistrictKpis,
@@ -303,6 +304,34 @@ export default function DistrictDashboard() {
 
   const logoSrc = `${import.meta.env.BASE_URL}cel_logo.png`;
 
+  const [isExporting, setIsExporting] = useState(false);
+
+  const exportImage = async () => {
+    setIsExporting(true);
+    try {
+      const el = document.querySelector('.dd-page');
+      const canvas = await html2canvas(el, {
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: '#f1f5f9',
+        ignoreElements: el => el.classList.contains('dd-filter-bar'),
+      });
+      const link = document.createElement('a');
+      const period = kpis?.period;
+      const filename = period
+        ? `iKMC-District-${period.start}-to-${period.end}.png`
+        : 'iKMC-District-Dashboard.png';
+      link.download = filename;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    } catch (err) {
+      console.error('Image export failed:', err);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   return (
     <div className="dd-page">
 
@@ -327,6 +356,13 @@ export default function DistrictDashboard() {
         </div>
 
         <div className="dd-header-right">
+          <button className="dd-export-btn" onClick={exportImage} disabled={isExporting} title="Export as Image">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/>
+              <polyline points="21 15 16 10 5 21"/>
+            </svg>
+            {isExporting ? 'Exporting…' : 'Export Image'}
+          </button>
           <button className="dd-export-btn" onClick={() => window.print()} title="Export as PDF">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
               <polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2"/>
@@ -526,29 +562,26 @@ WHERE  lm.status = 1 AND lm.phase > 0
             accent="#3b82f6" loading={loading.kpis}
             onDebug={setActiveDebugInfo} debugInfo={{
               title: '48-Hour Stay',
-              sourceTable: 'babyAdmission',
-              appliedLogic: 'Active babies (status=1): TIMESTAMPDIFF(admissionDateTime → NOW()) ≥ 48h. Discharged babies (status=2): TIMESTAMPDIFF(admissionDateTime → dateOfDischarge) ≥ 48h. Eligible = status=1 admitted in period OR status=2 discharged in period.',
-              queryLogic: `SELECT
-  COUNT(DISTINCT CASE
-    WHEN ba.status = 1
-      AND TIMESTAMPDIFF(HOUR, ba.admissionDateTime, NOW()) >= 48
-    THEN ba.id
-    WHEN ba.status = 2
-      AND TIMESTAMPDIFF(HOUR, ba.admissionDateTime, ba.dateOfDischarge) >= 48
-    THEN ba.id
-  END) AS stay48,
-  COUNT(DISTINCT ba.id) AS stayEligible
+              sourceTable: 'babyAdmission, loungeMaster',
+              appliedLogic: 'Discharged babies (status=2) whose dateOfDischarge falls in the period. stay48 = those where TIMESTAMPDIFF(admissionDateTime → dateOfDischarge) ≥ 48h. stayEligible = all discharged in period.',
+              queryLogic: `-- stay48
+SELECT COUNT(DISTINCT ba.id) AS stay48
 FROM   babyAdmission ba
 JOIN   loungeMaster lm ON ba.loungeId = lm.loungeId
-JOIN   facilitylist  f  ON lm.facilityId = f.FacilityID
-WHERE  f.Status = 1 AND lm.status = 1 AND lm.phase > 0
-  AND  ba.status IN (1, 2)
-  AND  (
-    (ba.status = 1 AND ba.admissionDateTime BETWEEN :startTs AND :endTs)
-    OR (ba.status = 2 AND ba.dateOfDischarge BETWEEN :startTs AND :endTs)
-  )`,
+WHERE  lm.status = 1 AND lm.phase > 0
+  AND  ba.status = 2
+  AND  ba.dateOfDischarge BETWEEN :startTs AND :endTs
+  AND  TIMESTAMPDIFF(HOUR, ba.admissionDateTime, ba.dateOfDischarge) >= 48
+
+-- stayEligible
+SELECT COUNT(DISTINCT ba.id) AS stayEligible
+FROM   babyAdmission ba
+JOIN   loungeMaster lm ON ba.loungeId = lm.loungeId
+WHERE  lm.status = 1 AND lm.phase > 0
+  AND  ba.status = 2
+  AND  ba.dateOfDischarge BETWEEN :startTs AND :endTs`,
               formulas: [
-                '48h Stay Count = babies where TIMESTAMPDIFF ≥ 48h',
+                '48h Stay Count = discharged babies where TIMESTAMPDIFF(admissionDateTime → dateOfDischarge) ≥ 48h',
                 '48h Stay % = (stay48 / stayEligible) × 100',
               ],
             }} />
@@ -580,10 +613,9 @@ FROM (
   FROM   babyAdmission ba
   JOIN   babyDailyNutrition bdn ON bdn.babyAdmissionId = ba.id
   JOIN   loungeMaster lm ON ba.loungeId = lm.loungeId
-  JOIN   facilitylist  f  ON lm.facilityId = f.FacilityID
-  WHERE  f.Status = 1 AND lm.status = 1 AND lm.phase > 0
-    AND  ba.status = 1
-    AND  ba.admissionDateTime BETWEEN :startTs AND :endTs
+  WHERE  lm.status = 1 AND lm.phase > 0
+    AND  ba.status = 2
+    AND  ba.dateOfDischarge BETWEEN :startTs AND :endTs
   GROUP  BY ba.id
 ) t`,
               formulas: ['Exclusive BF % = (babies with no non-exclusive BF method / total babies with BF records) × 100'],

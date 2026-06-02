@@ -112,9 +112,13 @@
   white-space: nowrap;
   transition: background 0.15s, color 0.15s;
 }
-.dd-export-btn:hover {
+.dd-export-btn:hover:not(:disabled) {
   background: rgba(255,255,255,0.18);
   color: #fff;
+}
+.dd-export-btn:disabled {
+  opacity: 0.55;
+  cursor: wait;
 }
 
 /* Logo — white pill so it's readable on the dark header */
