@@ -481,12 +481,12 @@ export default function DistrictDashboard() {
               sourceTable: 'loungeMaster, facilitylist',
               appliedLogic: 'Count of distinct facilities that have at least one active lounge (phase > 0, status = 1) matching the selected filters.',
               queryLogic: `SELECT COUNT(DISTINCT lm.facilityId) AS totalFacilities
-FROM   loungeMaster lm
-JOIN   facilitylist f ON lm.facilityId = f.FacilityID
-WHERE  f.Status = 1
-  AND  lm.status = 1
-  AND  lm.phase > 0
-  AND  f.StateID IN (:stateIds)
+FROM   loungeMaster  lm
+JOIN   facilitylist  f  ON lm.facilityId = f.FacilityID
+WHERE  f.Status            = 1
+  AND  lm.status           = 1
+  AND  lm.phase            > 0
+  AND  f.StateID        IN (:stateIds)
   AND  f.PRIDistrictCode IN (:districtCodes)
   AND  f.FacilityTypeID  IN (:typeIds)
   AND  lm.facilityId     IN (:facilityIds)`,
@@ -498,19 +498,25 @@ WHERE  f.Status = 1
             accent="#0ea5e9" loading={loading.kpis}
             onDebug={setActiveDebugInfo} debugInfo={{
               title: 'Daily App Use % (Fully Compliant Lounges)',
-              sourceTable: 'nurseDutyChange, loungeMaster',
+              sourceTable: 'nurseDutyChange, loungeMaster, facilitylist',
               appliedLogic: 'Counts lounges that had at least one nurseDutyChange (nurse check-in) record on EVERY calendar day of the selected range. A lounge active on only 6 of 7 days is NOT counted.',
               queryLogic: `SELECT COUNT(*) AS compliantLounges
 FROM (
-  SELECT lm.loungeId,
-         COUNT(DISTINCT DATE(ndc.addDate)) AS daysActive
-  FROM   nurseDutyChange ndc
-  JOIN   loungeMaster lm ON ndc.loungeId = lm.loungeId
-  WHERE  lm.status = 1
-    AND  lm.phase  > 0
-    AND  DATE(ndc.addDate) BETWEEN :startDate AND :endDate
-  GROUP  BY lm.loungeId
-  HAVING daysActive >= :totalDays
+  SELECT   lm.loungeId,
+           COUNT(DISTINCT DATE(ndc.addDate)) AS daysActive
+  FROM     nurseDutyChange ndc
+  JOIN     loungeMaster    lm ON ndc.loungeId   = lm.loungeId
+  JOIN     facilitylist    f  ON lm.facilityId  = f.FacilityID
+  WHERE    f.Status            = 1
+    AND    lm.status           = 1
+    AND    lm.phase            > 0
+    AND    DATE(ndc.addDate)   BETWEEN :startDate AND :endDate
+    AND    f.StateID        IN (:stateIds)
+    AND    f.PRIDistrictCode IN (:districtCodes)
+    AND    f.FacilityTypeID  IN (:typeIds)
+    AND    lm.facilityId     IN (:facilityIds)
+  GROUP BY lm.loungeId
+  HAVING   daysActive >= :totalDays
 ) t`,
               formulas: ['Daily App Use % = (lounges active on all days / total lounges) × 100'],
             }} />
@@ -518,48 +524,69 @@ FROM (
           <KpiCard label="Total Babies" value={k.totalBaby ?? '—'} unit="admissions" accent="#8b5cf6" loading={loading.kpis}
             onDebug={setActiveDebugInfo} debugInfo={{
               title: 'Total Babies',
-              sourceTable: 'babyAdmission, loungeMaster',
+              sourceTable: 'babyAdmission, loungeMaster, facilitylist',
               appliedLogic: 'Count of distinct baby admission records (status IN 1,2) whose admissionDateTime falls within the selected date range.',
               queryLogic: `SELECT COUNT(DISTINCT ba.id) AS totalBaby
 FROM   babyAdmission ba
-JOIN   loungeMaster lm ON ba.loungeId = lm.loungeId
-WHERE  lm.status = 1 AND lm.phase > 0
-  AND  ba.status IN (1, 2)
-  AND  ba.admissionDateTime BETWEEN :startTs AND :endTs`,
+JOIN   loungeMaster  lm ON ba.loungeId   = lm.loungeId
+JOIN   facilitylist  f  ON lm.facilityId = f.FacilityID
+WHERE  f.Status            = 1
+  AND  lm.status           = 1
+  AND  lm.phase            > 0
+  AND  ba.status        IN (1, 2)
+  AND  ba.admissionDateTime  BETWEEN :startTs AND :endTs
+  AND  f.StateID        IN (:stateIds)
+  AND  f.PRIDistrictCode IN (:districtCodes)
+  AND  f.FacilityTypeID  IN (:typeIds)
+  AND  lm.facilityId     IN (:facilityIds)`,
               formulas: ['Total Babies = COUNT(DISTINCT babyAdmission.id)'],
             }} />
 
           <KpiCard label="LBW Admitted" value={k.lbwAdmitted ?? '—'} unit="LBW babies" accent="#f59e0b" loading={loading.kpis}
             onDebug={setActiveDebugInfo} debugInfo={{
               title: 'LBW Admitted',
-              sourceTable: 'babyAdmission, babyRegistration, loungeMaster',
+              sourceTable: 'babyAdmission, babyRegistration, loungeMaster, facilitylist',
               appliedLogic: 'Count of babies (status IN 1,2) admitted in the period whose birth weight is < 2500 g and birthWeightAvailable = "Yes" in babyRegistration.',
               queryLogic: `SELECT COUNT(DISTINCT ba.id) AS lbwAdmitted
-FROM   babyAdmission ba
-JOIN   babyRegistration br ON ba.babyId  = br.babyId
-JOIN   loungeMaster lm     ON ba.loungeId = lm.loungeId
-WHERE  lm.status = 1 AND lm.phase > 0
-  AND  ba.status IN (1, 2)
-  AND  ba.admissionDateTime BETWEEN :startTs AND :endTs
-  AND  br.babyWeight < 2500
-  AND  br.birthWeightAvailable = 'Yes'`,
+FROM   babyAdmission    ba
+JOIN   babyRegistration br ON ba.babyId      = br.babyId
+JOIN   loungeMaster     lm ON ba.loungeId    = lm.loungeId
+JOIN   facilitylist     f  ON lm.facilityId  = f.FacilityID
+WHERE  f.Status                = 1
+  AND  lm.status               = 1
+  AND  lm.phase                > 0
+  AND  ba.status            IN (1, 2)
+  AND  ba.admissionDateTime    BETWEEN :startTs AND :endTs
+  AND  br.babyWeight           < 2500
+  AND  br.birthWeightAvailable = 'Yes'
+  AND  f.StateID        IN (:stateIds)
+  AND  f.PRIDistrictCode IN (:districtCodes)
+  AND  f.FacilityTypeID  IN (:typeIds)
+  AND  lm.facilityId     IN (:facilityIds)`,
               formulas: ['LBW Admitted = COUNT(DISTINCT ba.id) WHERE br.babyWeight < 2500'],
             }} />
 
           <KpiCard label="LBW Discharged" value={k.lbwDischarged ?? '—'} unit="LBW babies" accent="#10b981" loading={loading.kpis}
             onDebug={setActiveDebugInfo} debugInfo={{
               title: 'LBW Discharged',
-              sourceTable: 'babyAdmission, babyRegistration, loungeMaster',
+              sourceTable: 'babyAdmission, babyRegistration, loungeMaster, facilitylist',
               appliedLogic: 'Among LBW babies (birth weight < 2500 g), count those discharged (status = 2) whose dateOfDischarge falls within the period.',
               queryLogic: `SELECT COUNT(DISTINCT ba.id) AS lbwDischarged
-FROM   babyAdmission ba
-JOIN   babyRegistration br ON ba.babyId  = br.babyId
-JOIN   loungeMaster lm     ON ba.loungeId = lm.loungeId
-WHERE  lm.status = 1 AND lm.phase > 0
-  AND  ba.status = 2
-  AND  ba.dateOfDischarge BETWEEN :startTs AND :endTs
-  AND  br.babyWeight < 2500
-  AND  br.birthWeightAvailable = 'Yes'`,
+FROM   babyAdmission    ba
+JOIN   babyRegistration br ON ba.babyId      = br.babyId
+JOIN   loungeMaster     lm ON ba.loungeId    = lm.loungeId
+JOIN   facilitylist     f  ON lm.facilityId  = f.FacilityID
+WHERE  f.Status                = 1
+  AND  lm.status               = 1
+  AND  lm.phase                > 0
+  AND  ba.status               = 2
+  AND  ba.dateOfDischarge      BETWEEN :startTs AND :endTs
+  AND  br.babyWeight           < 2500
+  AND  br.birthWeightAvailable = 'Yes'
+  AND  f.StateID        IN (:stateIds)
+  AND  f.PRIDistrictCode IN (:districtCodes)
+  AND  f.FacilityTypeID  IN (:typeIds)
+  AND  lm.facilityId     IN (:facilityIds)`,
               formulas: ['LBW Discharged = COUNT(DISTINCT ba.id) WHERE ba.status = 2 AND br.babyWeight < 2500'],
             }} />
 
@@ -570,28 +597,44 @@ WHERE  lm.status = 1 AND lm.phase > 0
             accent="#3b82f6" loading={loading.kpis}
             onDebug={setActiveDebugInfo} debugInfo={{
               title: '48-Hour Stay',
-              sourceTable: 'babyAdmission, babyRegistration, loungeMaster',
+              sourceTable: 'babyAdmission, babyRegistration, loungeMaster, facilitylist',
               appliedLogic: 'LBW discharged babies (babyWeight < 2500g, status=2) whose dateOfDischarge falls in the period. stay48 = those where TIMESTAMPDIFF(admissionDateTime → dateOfDischarge) ≥ 48h. stayEligible = all LBW discharged in period.',
-              queryLogic: `-- stay48
+              queryLogic: `-- stay48: LBW discharged babies who stayed ≥ 48 hours
 SELECT COUNT(DISTINCT ba.id) AS stay48
-FROM   babyAdmission ba
-JOIN   babyRegistration br ON ba.babyId = br.babyId
-JOIN   loungeMaster lm ON ba.loungeId = lm.loungeId
-WHERE  lm.status = 1 AND lm.phase > 0
-  AND  ba.status = 2
-  AND  ba.dateOfDischarge BETWEEN :startTs AND :endTs
+FROM   babyAdmission    ba
+JOIN   babyRegistration br ON ba.babyId      = br.babyId
+JOIN   loungeMaster     lm ON ba.loungeId    = lm.loungeId
+JOIN   facilitylist     f  ON lm.facilityId  = f.FacilityID
+WHERE  f.Status                = 1
+  AND  lm.status               = 1
+  AND  lm.phase                > 0
+  AND  ba.status               = 2
+  AND  ba.dateOfDischarge      BETWEEN :startTs AND :endTs
   AND  TIMESTAMPDIFF(HOUR, ba.admissionDateTime, ba.dateOfDischarge) >= 48
-  AND  br.babyWeight < 2500 AND br.birthWeightAvailable = 'Yes'
+  AND  br.babyWeight           < 2500
+  AND  br.birthWeightAvailable = 'Yes'
+  AND  f.StateID        IN (:stateIds)
+  AND  f.PRIDistrictCode IN (:districtCodes)
+  AND  f.FacilityTypeID  IN (:typeIds)
+  AND  lm.facilityId     IN (:facilityIds)
 
--- stayEligible
+-- stayEligible: all LBW discharged in the period
 SELECT COUNT(DISTINCT ba.id) AS stayEligible
-FROM   babyAdmission ba
-JOIN   babyRegistration br ON ba.babyId = br.babyId
-JOIN   loungeMaster lm ON ba.loungeId = lm.loungeId
-WHERE  lm.status = 1 AND lm.phase > 0
-  AND  ba.status = 2
-  AND  ba.dateOfDischarge BETWEEN :startTs AND :endTs
-  AND  br.babyWeight < 2500 AND br.birthWeightAvailable = 'Yes'`,
+FROM   babyAdmission    ba
+JOIN   babyRegistration br ON ba.babyId      = br.babyId
+JOIN   loungeMaster     lm ON ba.loungeId    = lm.loungeId
+JOIN   facilitylist     f  ON lm.facilityId  = f.FacilityID
+WHERE  f.Status                = 1
+  AND  lm.status               = 1
+  AND  lm.phase                > 0
+  AND  ba.status               = 2
+  AND  ba.dateOfDischarge      BETWEEN :startTs AND :endTs
+  AND  br.babyWeight           < 2500
+  AND  br.birthWeightAvailable = 'Yes'
+  AND  f.StateID        IN (:stateIds)
+  AND  f.PRIDistrictCode IN (:districtCodes)
+  AND  f.FacilityTypeID  IN (:typeIds)
+  AND  lm.facilityId     IN (:facilityIds)`,
               formulas: [
                 '48h Stay Count = LBW discharged babies where TIMESTAMPDIFF(admissionDateTime → dateOfDischarge) ≥ 48h',
                 '48h Stay % = (stay48 / stayEligible) × 100',
@@ -604,32 +647,44 @@ WHERE  lm.status = 1 AND lm.phase > 0
             accent="#ec4899" loading={loading.kpis}
             onDebug={setActiveDebugInfo} debugInfo={{
               title: 'Exclusive Breastfeeding %',
-              sourceTable: 'babyAdmission, babyDailyNutrition, babyRegistration, loungeMaster',
+              sourceTable: 'babyAdmission, babyDailyNutrition, babyRegistration, loungeMaster, facilitylist',
               appliedLogic: 'LBW discharged babies (babyWeight < 2500g, status=2, dateOfDischarge in period). Exclusive if all nutrition records use ONLY method 1 (Breastfeed) or 2 (Expressed BM). Only babies with ≥1 nutrition record are counted.',
-              queryLogic: `-- Exclusive BF = breastFeedMethod contains ONLY method 1 (Breastfeed) or 2 (Expressed BM)
--- non_excl: records where method 3-15 (non-exclusive) is present
--- rec_count: only records with a valid, non-null, non-empty breastFeedMethod
+              queryLogic: `-- Exclusive BF: all nutrition records use ONLY method 1 (Breastfeed) or 2 (Expressed BM)
+-- non_excl : count of records where method 3–15 (non-exclusive) is present
+-- rec_count: count of records with a valid, non-null, non-empty breastFeedMethod
 
 SELECT SUM(CASE WHEN non_excl = 0 AND rec_count > 0 THEN 1 ELSE 0 END) AS exclusive,
-       COUNT(*) AS bfTotal
+       COUNT(*)                                                           AS bfTotal
 FROM (
-  SELECT ba.id,
-    SUM(CASE WHEN bdn.breastFeedMethod IS NOT NULL
-      AND bdn.breastFeedMethod NOT IN ('null', '[]', '')
-      AND bdn.breastFeedMethod REGEXP '"(3|4|5|6|7|8|9|10|11|12|13|14|15)"'
-      THEN 1 ELSE 0 END) AS non_excl,
-    SUM(CASE WHEN bdn.breastFeedMethod IS NOT NULL
-      AND bdn.breastFeedMethod NOT IN ('null', '[]', '')
-      THEN 1 ELSE 0 END) AS rec_count
-  FROM   babyAdmission ba
-  JOIN   babyDailyNutrition bdn ON bdn.babyAdmissionId = ba.id
-  JOIN   babyRegistration br ON ba.babyId = br.babyId
-  JOIN   loungeMaster lm ON ba.loungeId = lm.loungeId
-  WHERE  lm.status = 1 AND lm.phase > 0
-    AND  ba.status = 2
-    AND  ba.dateOfDischarge BETWEEN :startTs AND :endTs
-    AND  br.babyWeight < 2500 AND br.birthWeightAvailable = 'Yes'
-  GROUP  BY ba.id
+  SELECT   ba.id,
+    SUM(CASE
+      WHEN bdn.breastFeedMethod IS NOT NULL
+       AND bdn.breastFeedMethod NOT IN ('null', '[]', '')
+       AND bdn.breastFeedMethod REGEXP '"(3|4|5|6|7|8|9|10|11|12|13|14|15)"'
+      THEN 1 ELSE 0
+    END) AS non_excl,
+    SUM(CASE
+      WHEN bdn.breastFeedMethod IS NOT NULL
+       AND bdn.breastFeedMethod NOT IN ('null', '[]', '')
+      THEN 1 ELSE 0
+    END) AS rec_count
+  FROM     babyAdmission      ba
+  JOIN     babyDailyNutrition bdn ON bdn.babyAdmissionId = ba.id
+  JOIN     babyRegistration   br  ON ba.babyId           = br.babyId
+  JOIN     loungeMaster       lm  ON ba.loungeId         = lm.loungeId
+  JOIN     facilitylist       f   ON lm.facilityId       = f.FacilityID
+  WHERE    f.Status                = 1
+    AND    lm.status               = 1
+    AND    lm.phase                > 0
+    AND    ba.status               = 2
+    AND    ba.dateOfDischarge      BETWEEN :startTs AND :endTs
+    AND    br.babyWeight           < 2500
+    AND    br.birthWeightAvailable = 'Yes'
+    AND    f.StateID        IN (:stateIds)
+    AND    f.PRIDistrictCode IN (:districtCodes)
+    AND    f.FacilityTypeID  IN (:typeIds)
+    AND    lm.facilityId     IN (:facilityIds)
+  GROUP BY ba.id
 ) t`,
               formulas: ['Exclusive BF % = (babies with no non-exclusive BF method / total babies with BF records) × 100'],
             }} />
@@ -640,24 +695,32 @@ FROM (
             accent="#22c55e" loading={loading.kpis}
             onDebug={setActiveDebugInfo} debugInfo={{
               title: 'Weight Gain / Stable %',
-              sourceTable: 'babyAdmission, babyDailyWeight',
+              sourceTable: 'babyAdmission, babyDailyWeight, loungeMaster, facilitylist',
               appliedLogic: 'Weight outcome evaluated only at discharge (status=2, dateOfDischarge in period). Compares first birth weight (weightType=1) against last discharge weight (weightType=4). Baby is gain/stable if discharge_wt ≥ birth_wt. Only discharged babies with both weight records are included.',
               queryLogic: `SELECT SUM(CASE WHEN discharge_wt >= birth_wt THEN 1 ELSE 0 END) AS gainStable,
-       COUNT(*) AS wsTotal
+       COUNT(*)                                                       AS wsTotal
 FROM (
   SELECT ba.id,
-    (SELECT bdw.babyWeight FROM babyDailyWeight bdw
+    (SELECT bdw.babyWeight
+     FROM   babyDailyWeight bdw
      WHERE  bdw.babyAdmissionId = ba.id AND bdw.weightType = 1
-     ORDER  BY bdw.id LIMIT 1)      AS birth_wt,
-    (SELECT bdw.babyWeight FROM babyDailyWeight bdw
+     ORDER  BY bdw.id     LIMIT 1)      AS birth_wt,
+    (SELECT bdw.babyWeight
+     FROM   babyDailyWeight bdw
      WHERE  bdw.babyAdmissionId = ba.id AND bdw.weightType = 4
-     ORDER  BY bdw.id DESC LIMIT 1) AS discharge_wt
+     ORDER  BY bdw.id DESC LIMIT 1)     AS discharge_wt
   FROM   babyAdmission ba
-  JOIN   loungeMaster lm ON ba.loungeId = lm.loungeId
+  JOIN   loungeMaster  lm ON ba.loungeId   = lm.loungeId
   JOIN   facilitylist  f  ON lm.facilityId = f.FacilityID
-  WHERE  f.Status = 1 AND lm.status = 1 AND lm.phase > 0
-    AND  ba.status = 1
-    AND  ba.admissionDateTime BETWEEN :startTs AND :endTs
+  WHERE  f.Status            = 1
+    AND  lm.status           = 1
+    AND  lm.phase            > 0
+    AND  ba.status           = 2
+    AND  ba.dateOfDischarge  BETWEEN :startTs AND :endTs
+    AND  f.StateID        IN (:stateIds)
+    AND  f.PRIDistrictCode IN (:districtCodes)
+    AND  f.FacilityTypeID  IN (:typeIds)
+    AND  lm.facilityId     IN (:facilityIds)
 ) t
 WHERE  birth_wt IS NOT NULL AND discharge_wt IS NOT NULL`,
               formulas: ['Wt Gain/Stable % = (discharge_wt ≥ birth_wt count / total babies with both weight records) × 100'],
@@ -666,27 +729,37 @@ WHERE  birth_wt IS NOT NULL AND discharge_wt IS NOT NULL`,
           <KpiCard label="Baby Assessed" value={k.babyAssessed ?? '—'} unit="babies" accent="#f97316" loading={loading.kpis}
             onDebug={setActiveDebugInfo} debugInfo={{
               title: 'Baby Assessed',
-              sourceTable: 'babyDailyMonitoring, babyAdmission',
-              appliedLogic: 'A baby is "assessed" if COUNT(assessmentDate in period) ≥ stayHours/12 (2 assessments per day). stayHours = TIMESTAMPDIFF(HOUR, MAX(admissionDate, fromDate), MIN(dischargeDate, toDate)). Includes status IN (1,2) — active and discharged babies present during the period.',
+              sourceTable: 'babyDailyMonitoring, babyAdmission, loungeMaster, facilitylist',
+              appliedLogic: 'A baby is "assessed" if COUNT(assessmentDate in period) ≥ stayHours/12 (2 assessments per day). stayHours = TIMESTAMPDIFF(HOUR, MAX(admissionDate, startDate), MIN(dischargeDate, endDate)). Includes status IN (1,2) — active and discharged babies present during the period.',
               queryLogic: `SELECT COUNT(DISTINCT id) AS assessed
 FROM (
-  SELECT ba.id,
-    COUNT(DISTINCT bdm.assessmentDate) AS actualAss,
-    GREATEST(FLOOR(TIMESTAMPDIFF(HOUR,
-      GREATEST(DATE(ba.admissionDateTime), :fromDate),
-      LEAST(COALESCE(DATE(ba.dateOfDischarge), :toDate), :toDate)
-    ) / 12), 1) AS expectedAss
-  FROM   babyAdmission ba
-  JOIN   loungeMaster lm ON ba.loungeId = lm.loungeId
-  JOIN   facilitylist  f  ON lm.facilityId = f.FacilityID
-  LEFT   JOIN babyDailyMonitoring bdm ON bdm.babyAdmissionId = ba.id
-    AND  bdm.assessmentDate BETWEEN :fromDate AND :toDate
-  WHERE  f.Status = 1 AND lm.status = 1 AND lm.phase > 0
-    AND  ba.status IN (1, 2)
-    AND  DATE(ba.admissionDateTime) <= :toDate
-    AND  (ba.dateOfDischarge IS NULL OR DATE(ba.dateOfDischarge) >= :fromDate)
-  GROUP  BY ba.id
-  HAVING actualAss >= expectedAss
+  SELECT   ba.id,
+           COUNT(DISTINCT bdm.assessmentDate) AS actualAss,
+           GREATEST(
+             FLOOR(
+               TIMESTAMPDIFF(HOUR,
+                 GREATEST(DATE(ba.admissionDateTime), :startDate),
+                 LEAST(COALESCE(DATE(ba.dateOfDischarge), :endDate), :endDate)
+               ) / 12
+             ), 1
+           )                                  AS expectedAss
+  FROM     babyAdmission       ba
+  JOIN     loungeMaster        lm  ON ba.loungeId         = lm.loungeId
+  JOIN     facilitylist        f   ON lm.facilityId       = f.FacilityID
+  LEFT JOIN babyDailyMonitoring bdm ON bdm.babyAdmissionId = ba.id
+         AND bdm.assessmentDate BETWEEN :startDate AND :endDate
+  WHERE    f.Status            = 1
+    AND    lm.status           = 1
+    AND    lm.phase            > 0
+    AND    ba.status        IN (1, 2)
+    AND    DATE(ba.admissionDateTime)                      <= :endDate
+    AND    (ba.dateOfDischarge IS NULL OR DATE(ba.dateOfDischarge) >= :startDate)
+    AND    f.StateID        IN (:stateIds)
+    AND    f.PRIDistrictCode IN (:districtCodes)
+    AND    f.FacilityTypeID  IN (:typeIds)
+    AND    lm.facilityId     IN (:facilityIds)
+  GROUP BY ba.id
+  HAVING   actualAss >= expectedAss
 ) t`,
               formulas: [
                 'Expected Assessments = MAX(FLOOR(stayHours / 12), 1)',
@@ -708,14 +781,19 @@ FROM (
                   sourceTable: 'facilitylist, loungeMaster, nurseDutyChange, babyAdmission, babyRegistration, babyDailyMonitoring, babyDailyNutrition, babyDailyWeight, motherAdmission',
                   appliedLogic: 'Per-facility aggregation of all clinical KPIs plus a daily app-activity grid. Each row represents one facility; coloured squares show whether any nurseDutyChange record exists for that facility on each day. Period totals mirror the KPI card calculations but scoped per facilityId.',
                   queryLogic: `-- App use per lounge per day (facilityId carried for facility-level rollup)
-SELECT lm.loungeId, lm.facilityId,
-       DATE_FORMAT(DATE(ndc.addDate), '%Y-%m-%d') AS dt
-FROM   nurseDutyChange ndc
-JOIN   loungeMaster lm ON ndc.loungeId = lm.loungeId
-WHERE  lm.facilityId IN (:facilityIds)
-  AND  lm.phase > 0
-  AND  DATE(ndc.addDate) BETWEEN :startDate AND :endDate
-GROUP  BY lm.loungeId, dt
+SELECT   lm.loungeId, lm.facilityId,
+         DATE_FORMAT(DATE(ndc.addDate), '%Y-%m-%d') AS dt
+FROM     nurseDutyChange ndc
+JOIN     loungeMaster    lm ON ndc.loungeId   = lm.loungeId
+JOIN     facilitylist    f  ON lm.facilityId  = f.FacilityID
+WHERE    f.Status            = 1
+  AND    lm.phase            > 0
+  AND    DATE(ndc.addDate)   BETWEEN :startDate AND :endDate
+  AND    f.StateID        IN (:stateIds)
+  AND    f.PRIDistrictCode IN (:districtCodes)
+  AND    f.FacilityTypeID  IN (:typeIds)
+  AND    lm.facilityId     IN (:facilityIds)
+GROUP BY lm.loungeId, dt
 
 -- 6 additional parallel queries follow the same facilityId GROUP BY pattern:
 -- (2) babyAdmission totals + 48h stay
