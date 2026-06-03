@@ -762,9 +762,12 @@ FROM (
   HAVING   actualAss >= expectedAss
 ) t`,
               formulas: [
-                'Expected Assessments = MAX(FLOOR(stayHours / 12), 1)',
-                'stayHours = TIMESTAMPDIFF(HOUR, MAX(admissionDate, fromDate), MIN(dischargeDate, toDate))',
                 'Baby Assessed if COUNT(assessmentDate in period) ≥ expectedAssessments',
+                'Expected Assessments = GREATEST(FLOOR(stayHours / 12), 1)',
+                'stayHours = TIMESTAMPDIFF(HOUR, GREATEST(admissionDate, startDate), LEAST(dischargeDate, endDate))',
+                '─── GREATEST() usage ───',
+                'GREATEST(DATE(ba.admissionDateTime), :startDate) — clips the effective stay start to the period boundary. A baby admitted before the period starts is treated as entering on :startDate, so stay hours are not over-counted.',
+                'GREATEST(FLOOR(stayHours / 12), 1) — enforces a minimum of 1 expected assessment. A baby admitted and discharged on the same day has 0 clipped hours → FLOOR(0/12) = 0, which would make every baby pass automatically. GREATEST ensures at least 1 assessment is always required.',
               ],
             }} />
 
@@ -778,35 +781,144 @@ FROM (
                 <h2 className="dd-card-title">Facility Performance Matrix</h2>
                 <DebugIcon onClick={setActiveDebugInfo} info={{
                   title: 'Facility Performance Matrix',
-                  sourceTable: 'facilitylist, loungeMaster, nurseDutyChange, babyAdmission, babyRegistration, babyDailyMonitoring, babyDailyNutrition, babyDailyWeight, motherAdmission',
-                  appliedLogic: 'Per-facility aggregation of all clinical KPIs plus a daily app-activity grid. Each row represents one facility; coloured squares show whether any nurseDutyChange record exists for that facility on each day. Period totals mirror the KPI card calculations but scoped per facilityId.',
-                  queryLogic: `-- App use per lounge per day (facilityId carried for facility-level rollup)
+                  sourceTable: 'facilitylist, loungeMaster, nurseDutyChange, babyAdmission, babyRegistration, babyDailyMonitoring, babyDailyNutrition, babyDailyWeight',
+                  appliedLogic: 'Per-facility aggregation of all clinical KPIs plus a daily app-activity grid. Each row represents one facility; coloured squares show whether any nurseDutyChange record exists for that facility on each day. Six parallel queries run per request, each grouped by facilityId.',
+                  queryLogic: `-- ① App Use: lounges with ≥1 nurse check-in per day
 SELECT   lm.loungeId, lm.facilityId,
          DATE_FORMAT(DATE(ndc.addDate), '%Y-%m-%d') AS dt
 FROM     nurseDutyChange ndc
-JOIN     loungeMaster    lm ON ndc.loungeId   = lm.loungeId
-JOIN     facilitylist    f  ON lm.facilityId  = f.FacilityID
-WHERE    f.Status            = 1
-  AND    lm.phase            > 0
-  AND    DATE(ndc.addDate)   BETWEEN :startDate AND :endDate
-  AND    f.StateID        IN (:stateIds)
-  AND    f.PRIDistrictCode IN (:districtCodes)
-  AND    f.FacilityTypeID  IN (:typeIds)
-  AND    lm.facilityId     IN (:facilityIds)
-GROUP BY lm.loungeId, dt
+JOIN     loungeMaster    lm ON ndc.loungeId  = lm.loungeId AND lm.phase > 0
+WHERE    lm.facilityId  IN (:facilityIds)
+  AND    DATE(ndc.addDate) BETWEEN :startDate AND :endDate
+GROUP BY lm.loungeId, lm.facilityId, dt
 
--- 6 additional parallel queries follow the same facilityId GROUP BY pattern:
--- (2) babyAdmission totals + 48h stay
--- (3) LBW admitted + discharged
--- (4) babyDailyMonitoring assessment count
--- (5) exclusive BF via babyDailyNutrition
--- (6) weight gain/stable via babyDailyWeight
--- (7) motherAdmission total`,
+-- ② Total Babies admitted in period (status IN 1, 2)
+SELECT   lm.facilityId, COUNT(DISTINCT ba.id) AS totalBaby
+FROM     babyAdmission ba
+JOIN     loungeMaster  lm ON ba.loungeId = lm.loungeId AND lm.phase > 0
+WHERE    lm.facilityId  IN (:facilityIds)
+  AND    ba.status      IN (1, 2)
+  AND    ba.admissionDateTime BETWEEN :startTs AND :endTs
+GROUP BY lm.facilityId
+
+-- ③ 48h Stay: LBW discharged in period, TIMESTAMPDIFF >= 48h (mirrors KPI logic)
+SELECT   lm.facilityId,
+         COUNT(DISTINCT CASE
+           WHEN TIMESTAMPDIFF(HOUR, ba.admissionDateTime, ba.dateOfDischarge) >= 48
+           THEN ba.id
+         END)                  AS stay48,
+         COUNT(DISTINCT ba.id) AS stayEligible
+FROM     babyAdmission    ba
+JOIN     babyRegistration br ON ba.babyId   = br.babyId
+JOIN     loungeMaster     lm ON ba.loungeId = lm.loungeId AND lm.phase > 0
+WHERE    lm.facilityId          IN (:facilityIds)
+  AND    ba.status               = 2
+  AND    ba.dateOfDischarge      BETWEEN :startTs AND :endTs
+  AND    br.babyWeight           < 2500
+  AND    br.birthWeightAvailable = 'Yes'
+GROUP BY lm.facilityId
+
+-- ④ LBW Admitted + Discharged (single combined query)
+SELECT   lm.facilityId,
+         COUNT(DISTINCT CASE
+           WHEN ba.admissionDateTime BETWEEN :startTs AND :endTs
+           THEN ba.id END)     AS lbwAdmitted,
+         COUNT(DISTINCT CASE
+           WHEN ba.status = 2
+            AND ba.dateOfDischarge BETWEEN :startTs AND :endTs
+           THEN ba.id END)     AS lbwDischarged
+FROM     babyAdmission    ba
+JOIN     babyRegistration br ON ba.babyId   = br.babyId
+JOIN     loungeMaster     lm ON ba.loungeId = lm.loungeId AND lm.phase > 0
+WHERE    lm.facilityId          IN (:facilityIds)
+  AND    ba.status              IN (1, 2)
+  AND    br.babyWeight           < 2500
+  AND    br.birthWeightAvailable = 'Yes'
+GROUP BY lm.facilityId
+
+-- ⑤ Baby Assessed: COUNT(assessmentDate in period) >= GREATEST(FLOOR(stayHours/12), 1)
+SELECT   facilityId, COUNT(DISTINCT id) AS assessed
+FROM (
+  SELECT   lm.facilityId, ba.id,
+           COUNT(DISTINCT bdm.assessmentDate) AS actualAss,
+           GREATEST(
+             FLOOR(
+               TIMESTAMPDIFF(HOUR,
+                 GREATEST(DATE(ba.admissionDateTime), :startDate),
+                 LEAST(COALESCE(DATE(ba.dateOfDischarge), :endDate), :endDate)
+               ) / 12
+             ), 1
+           )                                  AS expectedAss
+  FROM     babyAdmission        ba
+  JOIN     loungeMaster         lm  ON ba.loungeId         = lm.loungeId
+                                   AND lm.phase            > 0
+  LEFT JOIN babyDailyMonitoring bdm ON bdm.babyAdmissionId = ba.id
+         AND bdm.assessmentDate BETWEEN :startDate AND :endDate
+  WHERE    lm.facilityId  IN (:facilityIds)
+    AND    ba.status    IN (1, 2)
+    AND    DATE(ba.admissionDateTime)                      <= :endDate
+    AND    (ba.dateOfDischarge IS NULL OR DATE(ba.dateOfDischarge) >= :startDate)
+  GROUP BY lm.facilityId, ba.id
+  HAVING   actualAss >= expectedAss
+) t
+GROUP BY facilityId
+
+-- ⑥ Exclusive Breastfeeding (LBW discharged; all BF records must be method 1 or 2 only)
+SELECT   facilityId,
+         SUM(CASE WHEN non_excl = 0 AND rec_count > 0 THEN 1 ELSE 0 END) AS exclusive,
+         COUNT(*)                                                           AS bfTotal
+FROM (
+  SELECT   lm.facilityId, ba.id,
+    SUM(CASE
+      WHEN bdn.breastFeedMethod IS NOT NULL
+       AND bdn.breastFeedMethod NOT IN ('null', '[]', '')
+       AND bdn.breastFeedMethod REGEXP '"(3|4|5|6|7|8|9|10|11|12|13|14|15)"'
+      THEN 1 ELSE 0
+    END) AS non_excl,
+    SUM(CASE
+      WHEN bdn.breastFeedMethod IS NOT NULL
+       AND bdn.breastFeedMethod NOT IN ('null', '[]', '')
+      THEN 1 ELSE 0
+    END) AS rec_count
+  FROM     babyAdmission      ba
+  JOIN     babyDailyNutrition bdn ON bdn.babyAdmissionId = ba.id
+  JOIN     loungeMaster       lm  ON ba.loungeId         = lm.loungeId
+                                 AND lm.phase            > 0
+  WHERE    lm.facilityId  IN (:facilityIds)
+    AND    ba.status           = 2
+    AND    ba.dateOfDischarge  BETWEEN :startTs AND :endTs
+  GROUP BY lm.facilityId, ba.id
+) t
+GROUP BY facilityId
+
+-- ⑦ Weight Gain / Stable (birth weightType=1 vs last discharge weightType=4)
+SELECT   facilityId,
+         SUM(CASE WHEN discharge_wt >= birth_wt THEN 1 ELSE 0 END) AS gainStable,
+         COUNT(*)                                                     AS wsTotal
+FROM (
+  SELECT   lm.facilityId,
+    (SELECT bdw.babyWeight
+     FROM   babyDailyWeight bdw
+     WHERE  bdw.babyAdmissionId = ba.id AND bdw.weightType = 1
+     ORDER  BY bdw.id     LIMIT 1)      AS birth_wt,
+    (SELECT bdw.babyWeight
+     FROM   babyDailyWeight bdw
+     WHERE  bdw.babyAdmissionId = ba.id AND bdw.weightType = 4
+     ORDER  BY bdw.id DESC LIMIT 1)     AS discharge_wt
+  FROM     babyAdmission ba
+  JOIN     loungeMaster  lm ON ba.loungeId = lm.loungeId AND lm.phase > 0
+  WHERE    lm.facilityId   IN (:facilityIds)
+    AND    ba.status         = 2
+    AND    ba.dateOfDischarge BETWEEN :startTs AND :endTs
+) t
+WHERE  birth_wt IS NOT NULL AND discharge_wt IS NOT NULL
+GROUP BY facilityId`,
                   formulas: [
-                    'App% per facility = (days with nurseDutyChange / total days in range) × 100',
-                    'LBW % = LBW admitted / total babies admitted',
+                    'App Use % per facility = (days with ≥1 nurseDutyChange / total days in range) × 100',
+                    'LBW % = LBW admitted / total babies admitted × 100',
                     'Exclusive BF % = exclusive babies / babies with BF records × 100',
-                    'Wt Gain/Stable % = discharge_wt ≥ birth_wt count / babies with both weights × 100',
+                    'Wt Gain/Stable % = (discharge_wt ≥ birth_wt count / babies with both weights) × 100',
+                    '48h Stay % = stay48 / stayEligible × 100',
                   ],
                 }} />
               </div>

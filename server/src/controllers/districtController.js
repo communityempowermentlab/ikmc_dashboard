@@ -386,26 +386,21 @@ exports.getFacilityMatrix = async (req, res) => {
       GROUP BY lm.facilityId
     `, [facIds, startTs, endTs]);
 
-    // 2. 48h Stay — status=1 vs NOW(), status=2 vs dateOfDischarge
+    // 2. 48h Stay — LBW discharged in period, TIMESTAMPDIFF >= 48h (mirrors KPI logic)
     const [stayRows] = await pool.query(`
       SELECT lm.facilityId,
         COUNT(DISTINCT CASE
-          WHEN ba.status = 1
-            AND TIMESTAMPDIFF(HOUR, ba.admissionDateTime, NOW()) >= 48
-          THEN ba.id
-          WHEN ba.status = 2
-            AND TIMESTAMPDIFF(HOUR, ba.admissionDateTime, ba.dateOfDischarge) >= 48
+          WHEN TIMESTAMPDIFF(HOUR, ba.admissionDateTime, ba.dateOfDischarge) >= 48
           THEN ba.id
         END) AS stay48,
         COUNT(DISTINCT ba.id) AS stayEligible
-      FROM babyAdmission ba ${BA_JOIN}
-      WHERE lm.facilityId IN (?) AND ba.status IN (1, 2)
-        AND (
-          (ba.status = 1 AND ba.admissionDateTime BETWEEN ? AND ?)
-          OR (ba.status = 2 AND ba.dateOfDischarge BETWEEN ? AND ?)
-        )
+      FROM babyAdmission ba
+      JOIN babyRegistration br ON ba.babyId = br.babyId ${BA_JOIN}
+      WHERE lm.facilityId IN (?) AND ba.status = 2
+        AND ba.dateOfDischarge BETWEEN ? AND ?
+        AND br.babyWeight < 2500 AND br.birthWeightAvailable = 'Yes'
       GROUP BY lm.facilityId
-    `, [facIds, startTs, endTs, startTs, endTs]);
+    `, [facIds, startTs, endTs]);
 
     // 3. LBW Admitted IN (1,2) by admissionDateTime; LBW Discharged status=2 by dateOfDischarge
     const [lbwRows] = await pool.query(`
