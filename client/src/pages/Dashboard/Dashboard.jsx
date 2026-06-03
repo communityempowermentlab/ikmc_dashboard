@@ -27,6 +27,7 @@ import './Dashboard.css';
 import './DashboardSkeleton.css';
 import DebugIcon from '../../components/common/DebugIcon';
 import DebugModal from '../../components/common/DebugModal';
+import KpiIcon from '../../components/common/KpiIcon';
 
 const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const MONTH_FULL  = ['January','February','March','April','May','June','July','August','September','October','November','December'];
@@ -1015,11 +1016,29 @@ WHERE  lm.facilityId IN (:facilityIds)   -- omit for all facilities
                   ) : (
                     <><div className="kpi-val">—</div><div className="kpi-trend trend-neu">No data</div></>
                   )}
+                  <div className="kpi-icon-right"><KpiIcon emoji="👶" /></div>
                 </div>
 
                 {/* Total Discharges — DYNAMIC */}
                 <div className={`kpi ${admLoading.discharge ? 'green' : admDischarge ? 'green' : 'green'}`}>
-                  <div className="kpi-label">Total discharges</div>
+                  <div className="kpi-label">
+                    Total discharges
+                    <DebugIcon onClick={setActiveDebugInfo} info={{
+                      title: 'Total Discharges',
+                      sourceTable: 'babyAdmission, loungeMaster',
+                      appliedLogic: 'Count of distinct admission records where typeOfDischarge is set (not null/empty), within the selected date range and facility filters.',
+                      queryLogic: `SELECT COUNT(*) AS totalDischarge
+FROM   babyAdmission ba
+JOIN   loungeMaster lm ON ba.loungeId = lm.loungeId
+WHERE  lm.status = 1 AND lm.phase > 0
+  AND  lm.facilityId IN (:facilityIds)
+  AND  ba.status IN (1, 2)
+  AND  DATE(ba.admissionDateTime) BETWEEN :startDate AND :endDate
+  AND  ba.typeOfDischarge IS NOT NULL
+  AND  ba.typeOfDischarge != ''`,
+                      formulas: ['Total Discharges = COUNT(*) WHERE typeOfDischarge IS NOT NULL'],
+                    }} />
+                  </div>
                   {admLoading.discharge ? (
                     <div className="kpi-val adm-loading">—</div>
                   ) : admDischarge ? (
@@ -1030,6 +1049,7 @@ WHERE  lm.facilityId IN (:facilityIds)   -- omit for all facilities
                   ) : (
                     <><div className="kpi-val">—</div><div className="kpi-trend trend-neu">No data</div></>
                   )}
+                  <div className="kpi-icon-right"><KpiIcon emoji="🚪" /></div>
                 </div>
 
                 {(() => {
@@ -1045,7 +1065,34 @@ WHERE  lm.facilityId IN (:facilityIds)   -- omit for all facilities
                   const trendCls = col === 'green' ? 'trend-up' : col === 'red' ? 'trend-dn' : 'trend-neu';
                   return (
                     <div className={`kpi ${col}`}>
-                      <div className="kpi-label">Avg KMC duration</div>
+                      <div className="kpi-label">
+                        Avg KMC duration
+                        <DebugIcon onClick={setActiveDebugInfo} info={{
+                          title: 'Avg KMC Duration',
+                          sourceTable: 'babyDailyKMC, babyAdmission, loungeMaster',
+                          appliedLogic: 'Average KMC hours per baby-day. A baby-day is one unique (babyAdmissionId, kmcDate) pair with at least one non-empty duration record. Total hours = SUM of kmcDurationByMother + kmcDurationByOther converted from TIME to hours.',
+                          queryLogic: `SELECT
+  COUNT(DISTINCT CONCAT(bdk.babyAdmissionId, '-', bdk.kmcDate)) AS babyDays,
+  ROUND(SUM(
+    COALESCE(TIME_TO_SEC(CAST(bdk.kmcDurationByMother AS TIME)), 0) +
+    COALESCE(TIME_TO_SEC(CAST(bdk.kmcDurationByOther  AS TIME)), 0)
+  ) / 3600, 2)                                                   AS totalKmcHours
+FROM   babyDailyKMC bdk
+JOIN   babyAdmission ba ON bdk.babyAdmissionId = ba.id
+JOIN   loungeMaster  lm ON ba.loungeId = lm.loungeId
+WHERE  lm.status = 1 AND lm.phase > 0
+  AND  lm.facilityId IN (:facilityIds)
+  AND  ba.status IN (1, 2)
+  AND  DATE(bdk.kmcDate) BETWEEN :startDate AND :endDate
+  AND  (bdk.kmcDurationByMother IS NOT NULL AND bdk.kmcDurationByMother != ''
+    OR  bdk.kmcDurationByOther  IS NOT NULL AND bdk.kmcDurationByOther  != '')
+GROUP  BY YEAR(bdk.kmcDate), MONTH(bdk.kmcDate)`,
+                          formulas: [
+                            'Avg KMC = totalKmcHours / babyDays',
+                            'totalKmcHours = SUM(TIME_TO_SEC(kmcDurationByMother) + TIME_TO_SEC(kmcDurationByOther)) / 3600',
+                          ],
+                        }} />
+                      </div>
                       {admLoading.kmcDuration ? (
                         <div className="kpi-val adm-loading">—</div>
                       ) : overallAvg !== null ? (
@@ -1056,30 +1103,34 @@ WHERE  lm.facilityId IN (:facilityIds)   -- omit for all facilities
                       ) : (
                         <><div className="kpi-val">—</div><div className="kpi-trend trend-neu">No data</div></>
                       )}
+                      <div className="kpi-icon-right"><KpiIcon emoji="⏱️" /></div>
                     </div>
                   );
                 })()}
 
-                {/* Mortality rate — DYNAMIC */}
-                <div className={`kpi ${!admDischarge ? 'green' : admDischarge.diedPct > 5 ? 'red' : admDischarge.diedPct > 3 ? 'amber' : 'green'}`}>
-                  <div className="kpi-label">Mortality rate</div>
-                  {admLoading.discharge ? (
-                    <div className="kpi-val adm-loading">—</div>
-                  ) : admDischarge ? (
-                    <>
-                      <div className="kpi-val">{admDischarge.diedPct}<span style={{fontSize:'14px',fontWeight:400}}>%</span></div>
-                      <div className={`kpi-trend ${admDischarge.diedPct > 5 ? 'trend-dn' : admDischarge.diedPct > 3 ? 'trend-neu' : 'trend-up'}`}>
-                        {admDischarge.diedCount} deaths recorded
-                      </div>
-                    </>
-                  ) : (
-                    <><div className="kpi-val">—</div><div className="kpi-trend trend-neu">No data</div></>
-                  )}
-                </div>
-
                 {/* LAMA % — DYNAMIC */}
                 <div className={`kpi ${!admDischarge ? 'amber' : admDischarge.lamaPct > 15 ? 'red' : admDischarge.lamaPct > 10 ? 'amber' : 'green'}`}>
-                  <div className="kpi-label">LAMA %</div>
+                  <div className="kpi-label">
+                    LAMA %
+                    <DebugIcon onClick={setActiveDebugInfo} info={{
+                      title: 'LAMA %',
+                      sourceTable: 'babyAdmission, loungeMaster',
+                      appliedLogic: 'Left Against Medical Advice — percentage of discharged babies whose typeOfDischarge = "LAMA", out of all babies with a discharge record.',
+                      queryLogic: `SELECT
+  ba.typeOfDischarge,
+  COUNT(*) AS count
+FROM   babyAdmission ba
+JOIN   loungeMaster lm ON ba.loungeId = lm.loungeId
+WHERE  lm.status = 1 AND lm.phase > 0
+  AND  lm.facilityId IN (:facilityIds)
+  AND  ba.status IN (1, 2)
+  AND  DATE(ba.admissionDateTime) BETWEEN :startDate AND :endDate
+  AND  ba.typeOfDischarge IS NOT NULL
+  AND  ba.typeOfDischarge != ''
+GROUP  BY ba.typeOfDischarge`,
+                      formulas: ['LAMA % = (LAMA count / Total Discharged) × 100'],
+                    }} />
+                  </div>
                   {admLoading.discharge ? (
                     <div className="kpi-val adm-loading">—</div>
                   ) : admDischarge ? (
@@ -1092,6 +1143,7 @@ WHERE  lm.facilityId IN (:facilityIds)   -- omit for all facilities
                   ) : (
                     <><div className="kpi-val">—</div><div className="kpi-trend trend-neu">No data</div></>
                   )}
+                  <div className="kpi-icon-right"><KpiIcon emoji="⚠️" /></div>
                 </div>
                 {/* KMC within 2 hours — DYNAMIC */}
                 {(() => {
@@ -1101,7 +1153,31 @@ WHERE  lm.facilityId IN (:facilityIds)   -- omit for all facilities
                   const trendCls = pct === null ? 'trend-neu' : pct >= 80 ? 'trend-up' : pct >= 60 ? 'trend-neu' : 'trend-dn';
                   return (
                     <div className={`kpi ${col}`}>
-                      <div className="kpi-label">KMC Initiated within 2 Hours</div>
+                      <div className="kpi-label">
+                        KMC Initiated within 2 Hours
+                        <DebugIcon onClick={setActiveDebugInfo} info={{
+                          title: 'KMC Initiated within 2 Hours',
+                          sourceTable: 'babyAdmission, babyRegistration, loungeMaster',
+                          appliedLogic: 'Among Inborn and Outborn babies admitted in the period, the % where kmcInitiated2Hour = 11 (Yes). Only babies with a recorded Yes/No response (11 or 12) are counted.',
+                          queryLogic: `SELECT ba.typeOfBorn,
+       br.kmcInitiated2Hour,
+       COUNT(*) AS cnt
+FROM   babyAdmission ba
+JOIN   loungeMaster     lm ON ba.loungeId = lm.loungeId
+JOIN   babyRegistration br ON br.babyId   = ba.babyId
+WHERE  lm.status = 1 AND lm.phase > 0
+  AND  lm.facilityId IN (:facilityIds)
+  AND  ba.status IN (1, 2)
+  AND  DATE(ba.admissionDateTime) BETWEEN :startDate AND :endDate
+  AND  ba.typeOfBorn IN ('Inborn', 'Outborn')
+  AND  br.kmcInitiated2Hour IN (11, 12)
+GROUP  BY ba.typeOfBorn, br.kmcInitiated2Hour`,
+                          formulas: [
+                            'KMC within 2h % = (kmcInitiated2Hour = 11 count / total with Yes or No) × 100',
+                            '11 = Yes, 12 = No',
+                          ],
+                        }} />
+                      </div>
                       {admLoading.earlyCare ? (
                         <div className="kpi-val adm-loading">—</div>
                       ) : d ? (
@@ -1112,6 +1188,7 @@ WHERE  lm.facilityId IN (:facilityIds)   -- omit for all facilities
                       ) : (
                         <><div className="kpi-val">—</div><div className="kpi-trend trend-neu">No data</div></>
                       )}
+                      <div className="kpi-icon-right"><KpiIcon emoji="❤️" /></div>
                     </div>
                   );
                 })()}
@@ -1123,7 +1200,31 @@ WHERE  lm.facilityId IN (:facilityIds)   -- omit for all facilities
                   const trendCls = pct === null ? 'trend-neu' : pct >= 80 ? 'trend-up' : pct >= 60 ? 'trend-neu' : 'trend-dn';
                   return (
                     <div className={`kpi ${col}`}>
-                      <div className="kpi-label">Breastfeeding Initiated within 1 Hour</div>
+                      <div className="kpi-label">
+                        Breastfeeding Initiated within 1 Hour
+                        <DebugIcon onClick={setActiveDebugInfo} info={{
+                          title: 'Breastfeeding Initiated within 1 Hour',
+                          sourceTable: 'babyAdmission, babyRegistration, loungeMaster',
+                          appliedLogic: 'Among Inborn and Outborn babies admitted in the period, the % where breastfeedInitiated1Hour = 11 (Yes). Only babies with a recorded Yes/No response (11 or 12) are counted.',
+                          queryLogic: `SELECT ba.typeOfBorn,
+       br.breastfeedInitiated1Hour,
+       COUNT(*) AS cnt
+FROM   babyAdmission ba
+JOIN   loungeMaster     lm ON ba.loungeId = lm.loungeId
+JOIN   babyRegistration br ON br.babyId   = ba.babyId
+WHERE  lm.status = 1 AND lm.phase > 0
+  AND  lm.facilityId IN (:facilityIds)
+  AND  ba.status IN (1, 2)
+  AND  DATE(ba.admissionDateTime) BETWEEN :startDate AND :endDate
+  AND  ba.typeOfBorn IN ('Inborn', 'Outborn')
+  AND  br.breastfeedInitiated1Hour IN (11, 12)
+GROUP  BY ba.typeOfBorn, br.breastfeedInitiated1Hour`,
+                          formulas: [
+                            'BF within 1h % = (breastfeedInitiated1Hour = 11 count / total with Yes or No) × 100',
+                            '11 = Yes, 12 = No',
+                          ],
+                        }} />
+                      </div>
                       {admLoading.earlyCare ? (
                         <div className="kpi-val adm-loading">—</div>
                       ) : d ? (
@@ -1134,6 +1235,7 @@ WHERE  lm.facilityId IN (:facilityIds)   -- omit for all facilities
                       ) : (
                         <><div className="kpi-val">—</div><div className="kpi-trend trend-neu">No data</div></>
                       )}
+                      <div className="kpi-icon-right"><KpiIcon emoji="🤱" /></div>
                     </div>
                   );
                 })()}
@@ -1144,7 +1246,32 @@ WHERE  lm.facilityId IN (:facilityIds)   -- omit for all facilities
                   const trendCls = pct === null ? 'trend-neu' : pct >= 80 ? 'trend-up' : pct >= 60 ? 'trend-neu' : 'trend-dn';
                   return (
                     <div className={`kpi ${col}`}>
-                      <div className="kpi-label">KMC transport</div>
+                      <div className="kpi-label">
+                        KMC transport
+                        <DebugIcon onClick={setActiveDebugInfo} info={{
+                          title: 'KMC Transport',
+                          sourceTable: 'babyAdmission, loungeMaster, facilitylist',
+                          appliedLogic: 'Among babies with a recorded transport condition (babyTransferredCondition IN 11, 12), the % transported with mother (11 = With Mother, 12 = With Surrogate). Denominator = all babies with a transport record.',
+                          queryLogic: `SELECT ba.typeOfBorn,
+       ba.babyTransferredCondition,
+       COUNT(*) AS count
+FROM   babyAdmission ba
+JOIN   loungeMaster  lm ON ba.loungeId   = lm.loungeId
+JOIN   facilitylist  f  ON lm.facilityId = f.FacilityID
+WHERE  f.Status            = 1
+  AND  lm.status           = 1
+  AND  lm.phase            > 0
+  AND  lm.facilityId    IN (:facilityIds)
+  AND  ba.status        IN (1, 2)
+  AND  DATE(ba.admissionDateTime) BETWEEN :startDate AND :endDate
+  AND  ba.babyTransferredCondition IN (11, 12)
+GROUP  BY ba.typeOfBorn, ba.babyTransferredCondition`,
+                          formulas: [
+                            'KMC Transport % = (With Mother count / total with transport record) × 100',
+                            '11 = With Mother, 12 = With Surrogate',
+                          ],
+                        }} />
+                      </div>
                       {admLoading.transport ? (
                         <div className="kpi-val adm-loading">—</div>
                       ) : d && d.total > 0 ? (
@@ -1155,6 +1282,7 @@ WHERE  lm.facilityId IN (:facilityIds)   -- omit for all facilities
                       ) : (
                         <><div className="kpi-val">—</div><div className="kpi-trend trend-neu">No data</div></>
                       )}
+                      <div className="kpi-icon-right"><KpiIcon emoji="🚑" /></div>
                     </div>
                   );
                 })()}

@@ -11,6 +11,7 @@ import {
 } from '../../redux/slices/districtSlice';
 import DebugIcon from '../../components/common/DebugIcon';
 import DebugModal from '../../components/common/DebugModal';
+import KpiIcon from '../../components/common/KpiIcon';
 import SearchableSelect from '../../components/common/SearchableSelect';
 import './DistrictDashboard.css';
 
@@ -475,7 +476,7 @@ export default function DistrictDashboard() {
 
         {/* ── KPI Cards ───────────────────────────────────────────────────── */}
         <section className="dd-kpi-section">
-          <KpiCard label="iKMC Facilities" value={k.totalFacilities ?? '—'} unit="total" accent="#6366f1" loading={loading.kpis}
+          <KpiCard label="iKMC Facilities" icon={<KpiIcon emoji="🏥" />} value={k.totalFacilities ?? '—'} unit="total" accent="#6366f1" loading={loading.kpis}
             onDebug={setActiveDebugInfo} debugInfo={{
               title: 'iKMC Facilities',
               sourceTable: 'loungeMaster, facilitylist',
@@ -493,7 +494,7 @@ WHERE  f.Status            = 1
               formulas: ['Total Facilities = COUNT(DISTINCT lm.facilityId)'],
             }} />
 
-          <KpiCard label="Daily App Use" value={k.appUsePct != null ? `${k.appUsePct}%` : '—'}
+          <KpiCard label="Daily App Use" icon={<KpiIcon emoji="📱" />} value={k.appUsePct != null ? `${k.appUsePct}%` : '—'}
             sub={`${k.appUseLounges ?? 0} / ${k.totalLounges ?? 0} lounges · all ${k.totalDays ?? 0} days`}
             accent="#0ea5e9" loading={loading.kpis}
             onDebug={setActiveDebugInfo} debugInfo={{
@@ -521,7 +522,7 @@ FROM (
               formulas: ['Daily App Use % = (lounges active on all days / total lounges) × 100'],
             }} />
 
-          <KpiCard label="Total Admitted" value={k.totalBaby ?? '—'} unit="babies" accent="#8b5cf6" loading={loading.kpis}
+          <KpiCard label="Total Admitted" icon={<KpiIcon emoji="👶" />} value={k.totalBaby ?? '—'} unit="babies" accent="#8b5cf6" loading={loading.kpis}
             onDebug={setActiveDebugInfo} debugInfo={{
               title: 'Total Babies',
               sourceTable: 'babyAdmission, loungeMaster, facilitylist',
@@ -542,7 +543,7 @@ WHERE  f.Status            = 1
               formulas: ['Total Babies = COUNT(DISTINCT babyAdmission.id)'],
             }} />
 
-          <KpiCard label="LBW Admitted" value={k.lbwAdmitted ?? '—'} unit="LBW babies" accent="#f59e0b" loading={loading.kpis}
+          <KpiCard label="LBW Admitted" icon={<KpiIcon emoji="⚖️" />} value={k.lbwAdmitted ?? '—'} unit="LBW babies" accent="#f59e0b" loading={loading.kpis}
             onDebug={setActiveDebugInfo} debugInfo={{
               title: 'LBW Admitted',
               sourceTable: 'babyAdmission, babyRegistration, loungeMaster, facilitylist',
@@ -566,7 +567,7 @@ WHERE  f.Status                = 1
               formulas: ['LBW Admitted = COUNT(DISTINCT ba.id) WHERE br.babyWeight < 2500'],
             }} />
 
-          <KpiCard label="LBW Discharged" value={k.lbwDischarged ?? '—'} unit="LBW babies" accent="#10b981" loading={loading.kpis}
+          <KpiCard label="LBW Discharged" icon={<KpiIcon emoji="🏠" />} value={k.lbwDischarged ?? '—'} unit="LBW babies" accent="#10b981" loading={loading.kpis}
             onDebug={setActiveDebugInfo} debugInfo={{
               title: 'LBW Discharged',
               sourceTable: 'babyAdmission, babyRegistration, loungeMaster, facilitylist',
@@ -591,7 +592,8 @@ WHERE  f.Status                = 1
             }} />
 
           <KpiCard
-            label="48h Stay"
+            label="48hrs Stay"
+            icon={<KpiIcon emoji="⏱️" />}
             value={k.stay48 ?? '—'}
             sub={k.stay48Pct != null ? `${k.stay48Pct}% of ${k.stayEligible ?? 0} eligible babies` : undefined}
             accent="#3b82f6" loading={loading.kpis}
@@ -641,7 +643,7 @@ WHERE  f.Status                = 1
               ],
             }} />
 
-          <KpiCard label="Exclusive BF"
+          <KpiCard label="Exclusive Breastfeeding" icon={<KpiIcon emoji="🤱" />}
             value={k.bfPct != null ? `${k.bfPct}%` : '—'}
             sub={`${k.exclusiveBF ?? 0} of ${k.bfTotal ?? 0} babies`}
             accent="#ec4899" loading={loading.kpis}
@@ -689,7 +691,7 @@ FROM (
               formulas: ['Exclusive BF % = (babies with no non-exclusive BF method / total babies with BF records) × 100'],
             }} />
 
-          <KpiCard label="Wt Gain / Stable"
+          <KpiCard label="Weight Gain / Stable" icon={<KpiIcon emoji="📈" />}
             value={k.gsPct != null ? `${k.gsPct}%` : '—'}
             sub={`${k.gainStable ?? 0} of ${k.wsTotal ?? 0} LBW discharged`}
             accent="#22c55e" loading={loading.kpis}
@@ -732,7 +734,7 @@ FROM (
               ],
             }} />
 
-          <KpiCard label="Baby Assessed" value={k.babyAssessed ?? '—'} unit="babies"
+          <KpiCard label="Baby Assessment" icon={<KpiIcon emoji="📋" />} value={k.babyAssessed ?? '—'} unit="babies"
             sub={k.assessTotal > 0 ? `of ${k.assessTotal ?? 0} babies in period` : undefined}
             accent="#f97316" loading={loading.kpis}
             onDebug={setActiveDebugInfo} debugInfo={{
@@ -960,10 +962,10 @@ GROUP BY facilityId`,
                       <th className="dd-th-kpi">Total Baby</th>
                       <th className="dd-th-kpi">LBW Admission</th>
                       <th className="dd-th-kpi">LBW Discharge</th>
-                      <th className="dd-th-kpi">48h Stay</th>
-                      <th className="dd-th-kpi">Exclusive BF</th>
-                      <th className="dd-th-kpi">Weight Gain/Stable</th>
-                      <th className="dd-th-kpi">Baby Ass.</th>
+                      <th className="dd-th-kpi">48hrs Stay</th>
+                      <th className="dd-th-kpi">Exclusive Breastfeeding</th>
+                      <th className="dd-th-kpi">Weight Gain / Stable</th>
+                      <th className="dd-th-kpi">Baby Assessment</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1129,7 +1131,7 @@ function FilterGroup({ label, children }) {
   );
 }
 
-function KpiCard({ label, value, unit, sub, accent, loading, debugInfo, onDebug }) {
+function KpiCard({ label, icon, value, unit, sub, accent, loading, debugInfo, onDebug }) {
   return (
     <div className="dd-kpi-card" style={{ '--kpi-accent': accent }}>
       <div className="dd-kpi-accent-bar" />
@@ -1147,6 +1149,11 @@ function KpiCard({ label, value, unit, sub, accent, loading, debugInfo, onDebug 
         {!loading && unit && <div className="dd-kpi-unit">{unit}</div>}
         {!loading && sub  && <div className="dd-kpi-sub">{sub}</div>}
       </div>
+      {icon && (
+        <div className="dd-kpi-icon-right">
+          {icon}
+        </div>
+      )}
     </div>
   );
 }

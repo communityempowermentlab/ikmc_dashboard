@@ -29,6 +29,7 @@ const SECTION_LABELS = [
 const FEATURE_LABELS = [
   { key: 'geminiInsights', label: '✦ AI विश्लेषण (Gemini)', desc: 'Main dashboard Hindi insights' },
   { key: 'weeklyAnalysis', label: 'साप्ताहिक विश्लेषण',     desc: 'District dashboard weekly insights' },
+  { key: 'kpiIcons',       label: '🏷 KPI Icons',            desc: 'Show/hide icons on KPI summary cards' },
   { key: 'debugIcons',     label: '⚙ Validation & Debug Icons', desc: 'Show/hide settings icons on all cards' },
 ];
 

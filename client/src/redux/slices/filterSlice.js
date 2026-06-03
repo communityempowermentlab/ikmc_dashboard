@@ -26,6 +26,7 @@ const DEFAULT_VISIBILITY = {
   // Feature toggles (shared across dashboards)
   geminiInsights:  true,
   weeklyAnalysis:  true,
+  kpiIcons:        true,
   debugIcons:      true,
 };
 
