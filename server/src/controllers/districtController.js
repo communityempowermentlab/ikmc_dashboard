@@ -215,9 +215,11 @@ exports.getKpiSummary = async (req, res) => {
     `, [...lmVals, startTs, endTs]);
 
     // 4. Baby Assessment — compliant if COUNT(assessmentDate in period) >= stay_hours / 12
-    //    GREATEST(admissionDate, fromDate) → LEAST(dischargeDate, toDate) / 12
+    //    assessTotal = all babies in the assessment pool (denominator)
     const [assessRows] = await pool.query(`
-      SELECT COUNT(DISTINCT id) AS assessed
+      SELECT
+        SUM(CASE WHEN actualAss >= expectedAss THEN 1 ELSE 0 END) AS assessed,
+        COUNT(*) AS assessTotal
       FROM (
         SELECT ba.id,
           COUNT(DISTINCT bdm.assessmentDate) AS actualAss,
@@ -232,7 +234,6 @@ exports.getKpiSummary = async (req, res) => {
           AND DATE(ba.admissionDateTime) <= ?
           AND (ba.dateOfDischarge IS NULL OR DATE(ba.dateOfDischarge) >= ?)
         GROUP BY ba.id
-        HAVING actualAss >= expectedAss
       ) t
     `, [...values, start, end, end, start, end, end, start]);
 
@@ -260,7 +261,8 @@ exports.getKpiSummary = async (req, res) => {
       ) t
     `, [...lmVals, startTs, endTs]);
 
-    // 6. Weight Gain/Stable — status=2, discharged in period
+    // 6. Weight Gain/Stable — denominator = all LBW discharged in period
+    //    Babies without weight records contribute 0 to gainStable (NULL comparison → ELSE 0)
     const [wsRows] = await pool.query(`
       SELECT
         SUM(CASE WHEN discharge_wt >= birth_wt THEN 1 ELSE 0 END) AS gainStable,
@@ -271,11 +273,12 @@ exports.getKpiSummary = async (req, res) => {
            WHERE bdw.babyAdmissionId = ba.id AND bdw.weightType = 1 ORDER BY bdw.id LIMIT 1) AS birth_wt,
           (SELECT bdw.babyWeight FROM babyDailyWeight bdw
            WHERE bdw.babyAdmissionId = ba.id AND bdw.weightType = 4 ORDER BY bdw.id DESC LIMIT 1) AS discharge_wt
-        FROM babyAdmission ba ${BA_JOIN}
+        FROM babyAdmission ba
+        JOIN babyRegistration br ON ba.babyId = br.babyId ${BA_JOIN}
         WHERE ${condStr} AND ba.status = 2
           AND ba.dateOfDischarge BETWEEN ? AND ?
+          AND br.babyWeight < 2500 AND br.birthWeightAvailable = 'Yes'
       ) t
-      WHERE birth_wt IS NOT NULL AND discharge_wt IS NOT NULL
     `, [...values, startTs, endTs]);
 
     // 7. Total Mothers — status IN (1,2)
@@ -321,6 +324,7 @@ exports.getKpiSummary = async (req, res) => {
         gsPct:          wsTot > 0 ? Math.round((gainSt / wsTot) * 100) : 0,
         totalBaby:      n(babyRows[0].totalBaby),
         babyAssessed:   n(assessRows[0].assessed),
+        assessTotal:    n(assessRows[0].assessTotal),
         totalMothers:   n(moRows[0].totalMothers),
       },
     });
@@ -419,8 +423,11 @@ exports.getFacilityMatrix = async (req, res) => {
     `, [startTs, endTs, startTs, endTs, facIds]);
 
     // 4. Assessment — compliance formula: COUNT(assessmentDate in period) >= stayHours/12
+    //    assessTotal = all babies in the assessment pool per facility (denominator)
     const [assessRows] = await pool.query(`
-      SELECT facilityId, COUNT(DISTINCT id) AS assessed
+      SELECT facilityId,
+        SUM(CASE WHEN actualAss >= expectedAss THEN 1 ELSE 0 END) AS assessed,
+        COUNT(*) AS assessTotal
       FROM (
         SELECT lm.facilityId, ba.id,
           COUNT(DISTINCT bdm.assessmentDate) AS actualAss,
@@ -435,7 +442,6 @@ exports.getFacilityMatrix = async (req, res) => {
           AND DATE(ba.admissionDateTime) <= ?
           AND (ba.dateOfDischarge IS NULL OR DATE(ba.dateOfDischarge) >= ?)
         GROUP BY lm.facilityId, ba.id
-        HAVING actualAss >= expectedAss
       ) t
       GROUP BY facilityId
     `, [start, end, end, start, end, facIds, end, start]);
@@ -462,7 +468,8 @@ exports.getFacilityMatrix = async (req, res) => {
       GROUP BY facilityId
     `, [facIds, startTs, endTs]);
 
-    // 6. Weight Gain/Stable — status=2, discharged in period
+    // 6. Weight Gain/Stable — denominator = all LBW discharged in period
+    //    Babies without weight records contribute 0 to gainStable (NULL comparison → ELSE 0)
     const [wsRows] = await pool.query(`
       SELECT facilityId,
         SUM(CASE WHEN discharge_wt >= birth_wt THEN 1 ELSE 0 END) AS gainStable,
@@ -473,11 +480,12 @@ exports.getFacilityMatrix = async (req, res) => {
            WHERE bdw.babyAdmissionId = ba.id AND bdw.weightType = 1 ORDER BY bdw.id LIMIT 1) AS birth_wt,
           (SELECT bdw.babyWeight FROM babyDailyWeight bdw
            WHERE bdw.babyAdmissionId = ba.id AND bdw.weightType = 4 ORDER BY bdw.id DESC LIMIT 1) AS discharge_wt
-        FROM babyAdmission ba ${BA_JOIN}
+        FROM babyAdmission ba
+        JOIN babyRegistration br ON ba.babyId = br.babyId ${BA_JOIN}
         WHERE lm.facilityId IN (?) AND ba.status = 2
           AND ba.dateOfDischarge BETWEEN ? AND ?
+          AND br.babyWeight < 2500 AND br.birthWeightAvailable = 'Yes'
       ) t
-      WHERE birth_wt IS NOT NULL AND discharge_wt IS NOT NULL
       GROUP BY facilityId
     `, [facIds, startTs, endTs]);
 
@@ -537,6 +545,7 @@ exports.getFacilityMatrix = async (req, res) => {
         lbwAdmitted:   n(lbw.lbwAdmitted),
         lbwDischarged: n(lbw.lbwDischarged),
         assessed:      n(ass.assessed),
+        assessTotal:   n(ass.assessTotal),
         exclusiveBF:   excl,
         bfTotal:       bfTot,
         bfPct,

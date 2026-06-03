@@ -691,12 +691,12 @@ FROM (
 
           <KpiCard label="Wt Gain / Stable"
             value={k.gsPct != null ? `${k.gsPct}%` : '—'}
-            sub={`${k.gainStable ?? 0} of ${k.wsTotal ?? 0} babies`}
+            sub={`${k.gainStable ?? 0} of ${k.wsTotal ?? 0} LBW discharged`}
             accent="#22c55e" loading={loading.kpis}
             onDebug={setActiveDebugInfo} debugInfo={{
               title: 'Weight Gain / Stable %',
-              sourceTable: 'babyAdmission, babyDailyWeight, loungeMaster, facilitylist',
-              appliedLogic: 'Weight outcome evaluated only at discharge (status=2, dateOfDischarge in period). Compares first birth weight (weightType=1) against last discharge weight (weightType=4). Baby is gain/stable if discharge_wt ≥ birth_wt. Only discharged babies with both weight records are included.',
+              sourceTable: 'babyAdmission, babyRegistration, babyDailyWeight, loungeMaster, facilitylist',
+              appliedLogic: 'Weight outcome for LBW discharged babies (babyWeight < 2500g, status=2, dateOfDischarge in period). Compares first birth weight (weightType=1) against last discharge weight (weightType=4). Baby is gain/stable if discharge_wt ≥ birth_wt. Denominator = LBW discharged babies with both weight records.',
               queryLogic: `SELECT SUM(CASE WHEN discharge_wt >= birth_wt THEN 1 ELSE 0 END) AS gainStable,
        COUNT(*)                                                       AS wsTotal
 FROM (
@@ -709,29 +709,38 @@ FROM (
      FROM   babyDailyWeight bdw
      WHERE  bdw.babyAdmissionId = ba.id AND bdw.weightType = 4
      ORDER  BY bdw.id DESC LIMIT 1)     AS discharge_wt
-  FROM   babyAdmission ba
-  JOIN   loungeMaster  lm ON ba.loungeId   = lm.loungeId
-  JOIN   facilitylist  f  ON lm.facilityId = f.FacilityID
-  WHERE  f.Status            = 1
-    AND  lm.status           = 1
-    AND  lm.phase            > 0
-    AND  ba.status           = 2
-    AND  ba.dateOfDischarge  BETWEEN :startTs AND :endTs
+  FROM   babyAdmission    ba
+  JOIN   babyRegistration br ON ba.babyId      = br.babyId
+  JOIN   loungeMaster     lm ON ba.loungeId    = lm.loungeId
+  JOIN   facilitylist     f  ON lm.facilityId  = f.FacilityID
+  WHERE  f.Status                = 1
+    AND  lm.status               = 1
+    AND  lm.phase                > 0
+    AND  ba.status               = 2
+    AND  ba.dateOfDischarge      BETWEEN :startTs AND :endTs
+    AND  br.babyWeight           < 2500
+    AND  br.birthWeightAvailable = 'Yes'
     AND  f.StateID        IN (:stateIds)
     AND  f.PRIDistrictCode IN (:districtCodes)
     AND  f.FacilityTypeID  IN (:typeIds)
     AND  lm.facilityId     IN (:facilityIds)
-) t
-WHERE  birth_wt IS NOT NULL AND discharge_wt IS NOT NULL`,
-              formulas: ['Wt Gain/Stable % = (discharge_wt ≥ birth_wt count / total babies with both weight records) × 100'],
+) t`,
+              formulas: [
+                'Wt Gain/Stable % = (discharge_wt ≥ birth_wt count / all LBW discharged) × 100',
+                'Denominator = all LBW discharged babies in period (including those without weight records)',
+                'Babies without weight records contribute 0 to numerator — NULL >= NULL evaluates to ELSE 0 in CASE WHEN',
+              ],
             }} />
 
-          <KpiCard label="Baby Assessed" value={k.babyAssessed ?? '—'} unit="babies" accent="#f97316" loading={loading.kpis}
+          <KpiCard label="Baby Assessed" value={k.babyAssessed ?? '—'} unit="babies"
+            sub={k.assessTotal > 0 ? `of ${k.assessTotal ?? 0} babies in period` : undefined}
+            accent="#f97316" loading={loading.kpis}
             onDebug={setActiveDebugInfo} debugInfo={{
               title: 'Baby Assessed',
               sourceTable: 'babyDailyMonitoring, babyAdmission, loungeMaster, facilitylist',
               appliedLogic: 'A baby is "assessed" if COUNT(assessmentDate in period) ≥ stayHours/12 (2 assessments per day). stayHours = TIMESTAMPDIFF(HOUR, MAX(admissionDate, startDate), MIN(dischargeDate, endDate)). Includes status IN (1,2) — active and discharged babies present during the period.',
-              queryLogic: `SELECT COUNT(DISTINCT id) AS assessed
+              queryLogic: `SELECT SUM(CASE WHEN actualAss >= expectedAss THEN 1 ELSE 0 END) AS assessed,
+       COUNT(*)                                                        AS assessTotal
 FROM (
   SELECT   ba.id,
            COUNT(DISTINCT bdm.assessmentDate) AS actualAss,
@@ -759,7 +768,6 @@ FROM (
     AND    f.FacilityTypeID  IN (:typeIds)
     AND    lm.facilityId     IN (:facilityIds)
   GROUP BY ba.id
-  HAVING   actualAss >= expectedAss
 ) t`,
               formulas: [
                 'Baby Assessed if COUNT(assessmentDate in period) ≥ expectedAssessments',
@@ -837,7 +845,9 @@ WHERE    lm.facilityId          IN (:facilityIds)
 GROUP BY lm.facilityId
 
 -- ⑤ Baby Assessed: COUNT(assessmentDate in period) >= GREATEST(FLOOR(stayHours/12), 1)
-SELECT   facilityId, COUNT(DISTINCT id) AS assessed
+SELECT   facilityId,
+         SUM(CASE WHEN actualAss >= expectedAss THEN 1 ELSE 0 END) AS assessed,
+         COUNT(*)                                                    AS assessTotal
 FROM (
   SELECT   lm.facilityId, ba.id,
            COUNT(DISTINCT bdm.assessmentDate) AS actualAss,
@@ -859,7 +869,6 @@ FROM (
     AND    DATE(ba.admissionDateTime)                      <= :endDate
     AND    (ba.dateOfDischarge IS NULL OR DATE(ba.dateOfDischarge) >= :startDate)
   GROUP BY lm.facilityId, ba.id
-  HAVING   actualAss >= expectedAss
 ) t
 GROUP BY facilityId
 
@@ -891,7 +900,7 @@ FROM (
 ) t
 GROUP BY facilityId
 
--- ⑦ Weight Gain / Stable (birth weightType=1 vs last discharge weightType=4)
+-- ⑦ Weight Gain / Stable (LBW discharged; birth weightType=1 vs last discharge weightType=4)
 SELECT   facilityId,
          SUM(CASE WHEN discharge_wt >= birth_wt THEN 1 ELSE 0 END) AS gainStable,
          COUNT(*)                                                     AS wsTotal
@@ -905,19 +914,21 @@ FROM (
      FROM   babyDailyWeight bdw
      WHERE  bdw.babyAdmissionId = ba.id AND bdw.weightType = 4
      ORDER  BY bdw.id DESC LIMIT 1)     AS discharge_wt
-  FROM     babyAdmission ba
-  JOIN     loungeMaster  lm ON ba.loungeId = lm.loungeId AND lm.phase > 0
-  WHERE    lm.facilityId   IN (:facilityIds)
-    AND    ba.status         = 2
-    AND    ba.dateOfDischarge BETWEEN :startTs AND :endTs
+  FROM     babyAdmission    ba
+  JOIN     babyRegistration br ON ba.babyId   = br.babyId
+  JOIN     loungeMaster     lm ON ba.loungeId = lm.loungeId AND lm.phase > 0
+  WHERE    lm.facilityId          IN (:facilityIds)
+    AND    ba.status               = 2
+    AND    ba.dateOfDischarge      BETWEEN :startTs AND :endTs
+    AND    br.babyWeight           < 2500
+    AND    br.birthWeightAvailable = 'Yes'
 ) t
-WHERE  birth_wt IS NOT NULL AND discharge_wt IS NOT NULL
 GROUP BY facilityId`,
                   formulas: [
                     'App Use % per facility = (days with ≥1 nurseDutyChange / total days in range) × 100',
                     'LBW % = LBW admitted / total babies admitted × 100',
                     'Exclusive BF % = exclusive babies / babies with BF records × 100',
-                    'Wt Gain/Stable % = (discharge_wt ≥ birth_wt count / babies with both weights) × 100',
+                    'Wt Gain/Stable % = (discharge_wt ≥ birth_wt count / LBW discharged with both weight records) × 100',
                     '48h Stay % = stay48 / stayEligible × 100',
                   ],
                 }} />

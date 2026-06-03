@@ -7,9 +7,14 @@ function parseIds(raw) {
 }
 
 function buildFacilityClause(facilityIds) {
-    if (!facilityIds.length) return { clause: '1=1', params: [] };
-    const ph = facilityIds.map(() => '?').join(',');
-    return { clause: `lm.facilityId IN (${ph})`, params: facilityIds };
+    const conds  = ['lm.status = 1', 'lm.phase > 0'];
+    const params = [];
+    if (facilityIds.length) {
+        const ph = facilityIds.map(() => '?').join(',');
+        conds.push(`lm.facilityId IN (${ph})`);
+        params.push(...facilityIds);
+    }
+    return { clause: conds.join(' AND '), params };
 }
 
 function buildLoungeClause(loungeIds) {
