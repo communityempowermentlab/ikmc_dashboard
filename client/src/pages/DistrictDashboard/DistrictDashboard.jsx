@@ -521,7 +521,7 @@ FROM (
               formulas: ['Daily App Use % = (lounges active on all days / total lounges) × 100'],
             }} />
 
-          <KpiCard label="Total Babies" value={k.totalBaby ?? '—'} unit="admissions" accent="#8b5cf6" loading={loading.kpis}
+          <KpiCard label="Total Admitted" value={k.totalBaby ?? '—'} unit="babies" accent="#8b5cf6" loading={loading.kpis}
             onDebug={setActiveDebugInfo} debugInfo={{
               title: 'Total Babies',
               sourceTable: 'babyAdmission, loungeMaster, facilitylist',
@@ -963,18 +963,10 @@ GROUP BY lm.loungeId, dt
           startTs:       `'${startDate} 00:00:00'`,
           endTs:         `'${endDate} 23:59:59'`,
           totalDays:     String(kpis?.period?.totalDays ?? mat.dates.length ?? 7),
-          stateIds:      selStateIds.length && selStateIds.length < (filterOptions?.states?.length ?? 0)
-                           ? selStateIds.join(', ')
-                           : '/* all states */',
-          districtCodes: selDistrictIds.length && selDistrictIds.length < (filterOptions?.districts?.length ?? 0)
-                           ? selDistrictIds.join(', ')
-                           : '/* all districts */',
-          typeIds:       selTypeIds.length && selTypeIds.length < (filterOptions?.facilityTypes?.length ?? 0)
-                           ? selTypeIds.join(', ')
-                           : '/* all types */',
-          facilityIds:   selFacilityIds.length && selFacilityIds.length < (filterOptions?.facilities?.length ?? 0)
-                           ? selFacilityIds.join(', ')
-                           : '/* all facilities */',
+          stateIds:      selStateIds.length      ? selStateIds.join(', ')    : '/* none */',
+          districtCodes: selDistrictIds.length   ? selDistrictIds.join(', ') : '/* none */',
+          typeIds:       selTypeIds.length        ? selTypeIds.join(', ')     : '/* none */',
+          facilityIds:   selFacilityIds.length    ? selFacilityIds.join(', ') : '/* none */',
         }}
       />
     </div>
