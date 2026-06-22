@@ -19,14 +19,28 @@ function parseMultiIds(raw) {
   return (raw || '').toString().split(',').map(s => s.trim()).filter(Boolean).map(Number);
 }
 
-function buildFacilityConditions(query, fAlias = 'f', lmAlias = 'lm') {
+function buildFacilityConditions(reqOrQuery, fAlias = 'f', lmAlias = 'lm') {
+  const query = reqOrQuery.query || reqOrQuery;
+  const user = reqOrQuery.user || null;
+  
   const conds  = [`${fAlias}.Status = 1`, `${lmAlias}.status = 1`, `${lmAlias}.phase > 0`];
   const values = [];
 
   const stateIds      = parseMultiIds(query.stateId);
   const districtCodes = parseMultiIds(query.districtCode);
   const typeIds       = parseMultiIds(query.facilityTypeId);
-  const facilityIds   = parseMultiIds(query.facilityId);
+  
+  // Intersect requested facilityIds with user's assigned facilities
+  let facilityIds = parseMultiIds(query.facilityId);
+  
+  if (user && user.assignedFacilities && user.assignedFacilities.length > 0) {
+      if (facilityIds.length > 0) {
+          facilityIds = facilityIds.filter(id => user.assignedFacilities.includes(id));
+          if (facilityIds.length === 0) facilityIds = [-1]; // Requested IDs not allowed
+      } else {
+          facilityIds = [...user.assignedFacilities];
+      }
+  }
 
   if (stateIds.length) {
     const ph = stateIds.map(() => '?').join(',');
@@ -67,38 +81,50 @@ function buildLoungeConditions(query, lmAlias = 'lm') {
 // GET /api/v1/district/filters
 exports.getFilters = async (req, res) => {
   try {
+    let facCond = '';
+    const params = [];
+    if (req.user && req.user.assignedFacilities && req.user.assignedFacilities.length > 0) {
+      const ph = req.user.assignedFacilities.map(() => '?').join(',');
+      facCond = `AND f.FacilityID IN (${ph})`;
+      params.push(...req.user.assignedFacilities);
+    }
+
     const [states] = await pool.query(`
       SELECT DISTINCT sm.stateCode AS id, sm.stateName AS name
       FROM stateMaster sm
-      JOIN facilitylist f ON f.StateID = sm.stateCode AND f.Status = 1
+      JOIN facilitylist f ON f.StateID = sm.stateCode AND f.Status = 1 ${facCond}
       JOIN loungeMaster lm ON lm.facilityId = f.FacilityID AND lm.status = 1 AND lm.phase > 0
       ORDER BY sm.stateName
-    `);
+    `, params);
+    
     const [districts] = await pool.query(`
       SELECT DISTINCT pd.priDistrictCode AS id, pd.districtNameProperCase AS name, f.StateID AS stateId
       FROM priDistricts pd
-      JOIN facilitylist f ON f.PRIDistrictCode = pd.priDistrictCode AND f.Status = 1
+      JOIN facilitylist f ON f.PRIDistrictCode = pd.priDistrictCode AND f.Status = 1 ${facCond}
       JOIN loungeMaster lm ON lm.facilityId = f.FacilityID AND lm.status = 1 AND lm.phase > 0
       ORDER BY pd.districtNameProperCase
-    `);
+    `, params);
+    
     const [facilityTypes] = await pool.query(`
       SELECT DISTINCT ft.id, ft.facilityTypeName AS name, ft.priority
       FROM facilityType ft
-      JOIN facilitylist f ON f.FacilityTypeID = ft.id AND f.Status = 1
+      JOIN facilitylist f ON f.FacilityTypeID = ft.id AND f.Status = 1 ${facCond}
       JOIN loungeMaster lm ON lm.facilityId = f.FacilityID AND lm.status = 1 AND lm.phase > 0
       WHERE ft.status = 1
       ORDER BY ft.priority, ft.facilityTypeName
-    `);
+    `, params);
+    
     const [facilities] = await pool.query(`
       SELECT f.FacilityID AS id, f.FacilityName AS name,
              f.StateID AS stateId, f.PRIDistrictCode AS districtCode,
              f.FacilityTypeID AS facilityTypeId
       FROM facilitylist f
       JOIN loungeMaster lm ON lm.facilityId = f.FacilityID AND lm.status = 1 AND lm.phase > 0
-      WHERE f.Status = 1
+      WHERE f.Status = 1 ${facCond}
       GROUP BY f.FacilityID, f.FacilityName, f.StateID, f.PRIDistrictCode, f.FacilityTypeID
       ORDER BY f.FacilityName
-    `);
+    `, params);
+    
     res.json({ states, districts, facilityTypes, facilities });
   } catch (err) {
     console.error('getFilters error:', err);
@@ -108,9 +134,11 @@ exports.getFilters = async (req, res) => {
 
 // GET /api/v1/district/kpiSummary
 exports.getKpiSummary = async (req, res) => {
+  console.log("getKpiSummary req.query:", req.query);
+  console.log("req.user.assignedFacilities:", req.user?.assignedFacilities);
   try {
     const { start, end } = buildDateRange(req.query.startDate, req.query.endDate);
-    const { conds, values } = buildFacilityConditions(req.query);
+    const { conds, values } = buildFacilityConditions(req);
     const condStr = conds.join(' AND ');
     const { conds: lmConds, values: lmVals } = buildLoungeConditions(req.query);
     const lmCondStr = lmConds.join(' AND ');
@@ -338,7 +366,7 @@ exports.getKpiSummary = async (req, res) => {
 exports.getFacilityMatrix = async (req, res) => {
   try {
     const { start, end } = buildDateRange(req.query.startDate, req.query.endDate);
-    const { conds, values } = buildFacilityConditions(req.query);
+    const { conds, values } = buildFacilityConditions(req);
     const condStr = conds.join(' AND ');
     const startTs = `${start} 00:00:00`;
     const endTs   = `${end} 23:59:59`;

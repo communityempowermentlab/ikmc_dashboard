@@ -9,6 +9,8 @@ import {
   fetchFacilityMatrix,
   fetchWeeklyInsights,
 } from '../../redux/slices/districtSlice';
+import { logoutAsync } from '../../redux/slices/authSlice';
+import LogoutModal from '../../components/auth/LogoutModal';
 import DebugIcon from '../../components/common/DebugIcon';
 import DebugModal from '../../components/common/DebugModal';
 import KpiIcon from '../../components/common/KpiIcon';
@@ -123,6 +125,7 @@ export default function DistrictDashboard() {
   const dispatch = useDispatch();
   const { filterOptions, kpis, matrix, weeklyInsights, insightsError, loading } = useSelector(s => s.district);
   const { weeklyAnalysis: showWeeklyAnalysis, debugIcons: showDebugIcons } = useSelector(s => s.filters?.visibility ?? {});
+  const { user } = useSelector(state => state.auth);
 
   usePageMeta({
     title:       'District Weekly Performance — iKMC Programme',
@@ -141,6 +144,8 @@ export default function DistrictDashboard() {
 
   const [dismissedInsights, setDismissedInsights] = useState(new Set());
   const [activeDebugInfo,   setActiveDebugInfo]   = useState(null);
+  const [isLogoutModalOpen, setIsLogoutModalOpen] = useState(false);
+  const [isFilterDrawerOpen, setIsFilterDrawerOpen] = useState(false);
 
   useEffect(() => {
     dispatch(fetchDistrictFilters());
@@ -347,12 +352,14 @@ export default function DistrictDashboard() {
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <header className="dd-header">
         <div className="dd-header-left">
-          <img
-            src={logoSrc}
-            alt="CEL · ICMR"
-            className="dd-header-logo"
-            onError={e => { e.currentTarget.style.display = 'none'; }}
-          />
+          <Link to="/">
+            <img
+              src={logoSrc}
+              alt="CEL · ICMR"
+              className="dd-header-logo"
+              onError={e => { e.currentTarget.style.display = 'none'; }}
+            />
+          </Link>
           <div className="dd-header-divider" />
           <div className="dd-title-block">
             <h1 className="dd-title">District Weekly Performance</h1>
@@ -379,9 +386,25 @@ export default function DistrictDashboard() {
             </svg>
             Export PDF
           </button>
-          <Link to="/dashboard" className="dd-main-dash-btn">← Main Dashboard</Link>
+
+          {user && (
+            <>
+              <div className="dd-header-divider" />
+              <div className="dd-user-profile">
+                <div className="dd-user-info">
+                  <span className="dd-user-name">{user.name}</span>
+                  {user.designation && <span className="dd-user-role">{user.designation}</span>}
+                </div>
+                <button className="dd-btn-logout" onClick={() => setIsLogoutModalOpen(true)}>
+                  Logout
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </header>
+
+      {/* ... (existing content down to the end of component) */}
 
       {/* ── Print-only filter summary (hidden on screen, visible in PDF) ────── */}
       <div className="dd-print-filters">
@@ -1093,6 +1116,15 @@ GROUP BY facilityId`,
           typeIds:       selTypeIds.length        ? selTypeIds.join(', ')     : '/* none */',
           facilityIds:   selFacilityIds.length    ? selFacilityIds.join(', ') : '/* none */',
         }}
+      />
+      
+      <LogoutModal
+        isOpen={isLogoutModalOpen}
+        onConfirm={() => {
+          setIsLogoutModalOpen(false);
+          dispatch(logoutAsync());
+        }}
+        onCancel={() => setIsLogoutModalOpen(false)}
       />
     </div>
   );

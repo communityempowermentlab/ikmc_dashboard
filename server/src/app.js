@@ -9,18 +9,26 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+const authRoutes      = require('./routes/authRoutes');
 const locationRoutes  = require('./routes/locationRoutes');
 const admissionRoutes = require('./routes/admissionRoutes');
 const nurseRoutes     = require('./routes/nurseRoutes');
 const districtRoutes  = require('./routes/districtRoutes');
 
-app.use('/api/v1/dashboard', (req, res) => {
-    res.json({ message: "Dashboard API is running!" });
+// Import Middlewares
+const authMiddleware  = require('./middleware/authMiddleware');
+const facilityScopeMiddleware = require('./middleware/facilityScopeMiddleware');
+
+// Mount API routes
+app.use('/api/v1/auth',       authRoutes);
+
+app.use('/api/v1/dashboard', authMiddleware, facilityScopeMiddleware, (req, res) => {
+    res.json({ message: 'Dashboard API placeholder' });
 });
 
-app.use('/api/v1/locations',  locationRoutes);
-app.use('/api/v1/admissions', admissionRoutes);
-app.use('/api/v1/nurses',     nurseRoutes);
-app.use('/api/v1/district',   districtRoutes);
+app.use('/api/v1/locations',  authMiddleware, facilityScopeMiddleware, locationRoutes);
+app.use('/api/v1/admissions', authMiddleware, facilityScopeMiddleware, admissionRoutes);
+app.use('/api/v1/nurses',     authMiddleware, facilityScopeMiddleware, nurseRoutes);
+app.use('/api/v1/district',   authMiddleware, facilityScopeMiddleware, districtRoutes);
 
 module.exports = app;

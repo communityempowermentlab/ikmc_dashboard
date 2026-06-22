@@ -870,10 +870,6 @@ const Dashboard = () => {
         </div>
         <div className="header-right">
           <HeaderFilters />
-          <button className="btn-export" onClick={() => window.print()}>
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M3 10v3h10v-3M5 7l3 3 3-3M8 1v9"/></svg>
-            Export PDF
-          </button>
         </div>
       </header>
 

@@ -12,9 +12,15 @@ const parseIds = (raw) =>
 
 exports.getStates = async (req, res) => {
     try {
-        const [rows] = await pool.query(
-            'SELECT stateCode AS id, stateName AS name FROM stateMaster WHERE status = 1 ORDER BY stateName ASC'
-        );
+        let sql = 'SELECT stateCode AS id, stateName AS name FROM stateMaster WHERE status = 1';
+        let params = [];
+        if (req.user && req.user.assignedFacilities && req.user.assignedFacilities.length > 0) {
+            const ph = req.user.assignedFacilities.map(() => '?').join(',');
+            sql += ` AND stateCode IN (SELECT DISTINCT StateID FROM facilitylist WHERE FacilityID IN (${ph}))`;
+            params.push(...req.user.assignedFacilities);
+        }
+        sql += ' ORDER BY stateName ASC';
+        const [rows] = await pool.query(sql, params);
         res.json(rows.map(r => ({ ...r, name: toTitleCase(r.name) })));
     } catch (err) {
         console.error(err);
@@ -76,7 +82,16 @@ exports.getDistrictsByStates = async (req, res) => {
             const ph = ids.map(() => '?').join(',');
             sql += ` WHERE StateCode IN (${ph})`;
             params = ids;
+        } else {
+            sql += ` WHERE 1=1`;
         }
+        
+        if (req.user && req.user.assignedFacilities && req.user.assignedFacilities.length > 0) {
+            const ph2 = req.user.assignedFacilities.map(() => '?').join(',');
+            sql += ` AND priDistrictCode IN (SELECT DISTINCT PRIDistrictCode FROM facilitylist WHERE FacilityID IN (${ph2}))`;
+            params.push(...req.user.assignedFacilities);
+        }
+
         sql += ' ORDER BY districtNameProperCase ASC';
         const [rows] = await pool.query(sql, params);
         res.json(rows.map(r => ({ ...r, name: toTitleCase(r.name) })));
@@ -95,7 +110,12 @@ exports.getFacilitiesByDistricts = async (req, res) => {
         if (ids.length) {
             const ph = ids.map(() => '?').join(',');
             sql += ` AND PRIDistrictCode IN (${ph})`;
-            params = ids;
+            params.push(...ids);
+        }
+        if (req.user && req.user.assignedFacilities && req.user.assignedFacilities.length > 0) {
+            const ph = req.user.assignedFacilities.map(() => '?').join(',');
+            sql += ` AND FacilityID IN (${ph})`;
+            params.push(...req.user.assignedFacilities);
         }
         sql += ' ORDER BY FacilityName ASC LIMIT 500';
         const [rows] = await pool.query(sql, params);
@@ -115,7 +135,12 @@ exports.getLoungesByFacilities = async (req, res) => {
         if (ids.length) {
             const ph = ids.map(() => '?').join(',');
             sql += ` AND facilityId IN (${ph})`;
-            params = ids;
+            params.push(...ids);
+        }
+        if (req.user && req.user.assignedFacilities && req.user.assignedFacilities.length > 0) {
+            const ph = req.user.assignedFacilities.map(() => '?').join(',');
+            sql += ` AND facilityId IN (${ph})`;
+            params.push(...req.user.assignedFacilities);
         }
         sql += ' ORDER BY loungeName ASC LIMIT 500';
         const [rows] = await pool.query(sql, params);

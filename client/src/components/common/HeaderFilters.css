@@ -1,9 +1,61 @@
 /* ── HeaderFilters Bar ── */
 .hf-bar {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.hf-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.hf-user-profile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.hf-user-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.hf-user-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.hf-user-role {
+  font-size: 11px;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.btn-logout {
+  padding: 6px 12px;
+  background-color: #f1f5f9;
+  color: #475569;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-logout:hover {
+  background-color: #fee2e2;
+  color: #b91c1c;
+  border-color: #fca5a5;
 }
 
 /* Responsive: stack on smaller screens */
@@ -20,6 +72,9 @@
     width: auto;
     flex: 1;
     min-width: 0;
+  }
+  .hf-user-profile {
+    display: none; /* Hide on very small screens or make a dropdown */
   }
 }
 

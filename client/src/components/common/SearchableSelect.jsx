@@ -49,12 +49,12 @@ const SearchableSelect = ({
     if (!multiSelect) return null;
     const n = selectedValues.length;
     if (n === 0) return null;
-    if (n === formattedOptions.length && formattedOptions.length > 0)
-      return `All ${pluralLabel}`;
     if (n === 1) {
       const opt = formattedOptions.find(o => String(o.id) === selectedValues[0]);
       return opt ? opt.displayName : `1 ${pluralLabel.replace(/s$/, '')} selected`;
     }
+    if (n === formattedOptions.length && formattedOptions.length > 0)
+      return `All ${pluralLabel}`;
     return `${n} ${pluralLabel} selected`;
   }, [multiSelect, selectedValues, formattedOptions, pluralLabel]);
 
