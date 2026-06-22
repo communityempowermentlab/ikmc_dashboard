@@ -67,8 +67,6 @@ exports.login = async (req, res) => {
             assignedFacilities = assignments.map(a => a.facilityId).filter(id => id);
         }
 
-        // Generate JWT
-        const token = jwt.sign(
         const payload = { 
             id: user.id, 
             email: user.email, 
