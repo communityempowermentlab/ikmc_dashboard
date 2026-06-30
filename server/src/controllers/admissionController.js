@@ -865,10 +865,7 @@ exports.getBreastfeeding = async (req, res) => {
                    CASE
                      WHEN bdn.breastFeedMethod IS NULL
                        OR bdn.breastFeedMethod IN ('null', '[]', '') THEN 0
-                     WHEN JSON_OVERLAPS(
-                       bdn.breastFeedMethod,
-                       '["3","4","5","6","7","8","9","10","11","12","13","14","15"]'
-                     ) THEN 1
+                     WHEN bdn.breastFeedMethod REGEXP '"(3|4|5|6|7|8|9|10|11|12|13|14|15)"' THEN 1
                      ELSE 0
                    END
                  ) AS non_excl_count

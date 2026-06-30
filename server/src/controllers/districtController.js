@@ -163,8 +163,9 @@ exports.getKpiSummary = async (req, res) => {
     const [loungeCount] = await pool.query(`
       SELECT COUNT(DISTINCT lm.loungeId) AS total
       FROM loungeMaster lm
-      WHERE ${lmCondStr}
-    `, lmVals);
+      JOIN facilitylist f ON lm.facilityId = f.FacilityID
+      WHERE ${condStr}
+    `, values);
     const totalLounges = loungeCount[0].total || 0;
 
     // Lounges active on EVERY day of the range
@@ -174,11 +175,12 @@ exports.getKpiSummary = async (req, res) => {
         SELECT lm.loungeId, COUNT(DISTINCT DATE(ndc.addDate)) AS daysActive
         FROM nurseDutyChange ndc
         JOIN loungeMaster lm ON ndc.loungeId = lm.loungeId
-        WHERE ${lmCondStr} AND DATE(ndc.addDate) BETWEEN ? AND ?
+        JOIN facilitylist f ON lm.facilityId = f.FacilityID
+        WHERE ${condStr} AND DATE(ndc.addDate) BETWEEN ? AND ?
         GROUP BY lm.loungeId
         HAVING daysActive >= ?
       ) t
-    `, [...lmVals, start, end, totalDays]);
+    `, [...values, start, end, totalDays]);
     const appUseLounges = n(appRows[0].compliantLounges);
 
     const BA_JOIN = `
@@ -190,57 +192,57 @@ exports.getKpiSummary = async (req, res) => {
     const [babyRows] = await pool.query(`
       SELECT COUNT(DISTINCT ba.id) AS totalBaby
       FROM babyAdmission ba
-      JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
-      WHERE ${lmCondStr} AND ba.status IN (1, 2)
+      ${BA_JOIN}
+      WHERE ${condStr} AND ba.status IN (1, 2)
         AND ba.admissionDateTime BETWEEN ? AND ?
-    `, [...lmVals, startTs, endTs]);
+    `, [...values, startTs, endTs]);
 
     // 2a. 48h Stay — LBW discharged in period, TIMESTAMPDIFF >= 48h
     const [stay48Rows] = await pool.query(`
       SELECT COUNT(DISTINCT ba.id) AS stay48
       FROM babyAdmission ba
       JOIN babyRegistration br ON ba.babyId = br.babyId
-      JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
-      WHERE ${lmCondStr}
+      ${BA_JOIN}
+      WHERE ${condStr}
         AND ba.status = 2
         AND ba.dateOfDischarge BETWEEN ? AND ?
         AND TIMESTAMPDIFF(HOUR, ba.admissionDateTime, ba.dateOfDischarge) >= 48
         AND br.babyWeight < 2500 AND br.birthWeightAvailable = 'Yes'
-    `, [...lmVals, startTs, endTs]);
+    `, [...values, startTs, endTs]);
 
     // 2b. 48h Eligible — all LBW discharged babies in period
     const [stayEligRows] = await pool.query(`
       SELECT COUNT(DISTINCT ba.id) AS stayEligible
       FROM babyAdmission ba
       JOIN babyRegistration br ON ba.babyId = br.babyId
-      JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
-      WHERE ${lmCondStr}
+      ${BA_JOIN}
+      WHERE ${condStr}
         AND ba.status = 2
         AND ba.dateOfDischarge BETWEEN ? AND ?
         AND br.babyWeight < 2500 AND br.birthWeightAvailable = 'Yes'
-    `, [...lmVals, startTs, endTs]);
+    `, [...values, startTs, endTs]);
 
     // 3a. LBW Admitted — status IN (1,2), admissionDateTime in period
     const [lbwAdmRows] = await pool.query(`
       SELECT COUNT(DISTINCT ba.id) AS lbwAdmitted
       FROM babyAdmission ba
       JOIN babyRegistration br ON ba.babyId = br.babyId
-      JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
-      WHERE ${lmCondStr} AND ba.status IN (1, 2)
+      ${BA_JOIN}
+      WHERE ${condStr} AND ba.status IN (1, 2)
         AND ba.admissionDateTime BETWEEN ? AND ?
         AND br.babyWeight < 2500 AND br.birthWeightAvailable = 'Yes'
-    `, [...lmVals, startTs, endTs]);
+    `, [...values, startTs, endTs]);
 
     // 3b. LBW Discharged — dateOfDischarge in period
     const [lbwDisRows] = await pool.query(`
       SELECT COUNT(DISTINCT ba.id) AS lbwDischarged
       FROM babyAdmission ba
       JOIN babyRegistration br ON ba.babyId = br.babyId
-      JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
-      WHERE ${lmCondStr}
+      ${BA_JOIN}
+      WHERE ${condStr}
         AND ba.dateOfDischarge BETWEEN ? AND ?
         AND br.babyWeight < 2500 AND br.birthWeightAvailable = 'Yes'
-    `, [...lmVals, startTs, endTs]);
+    `, [...values, startTs, endTs]);
 
     // 4. Baby Assessment — compliant if COUNT(assessmentDate in period) >= stay_hours / 12
     //    assessTotal = all babies in the assessment pool (denominator)
@@ -263,7 +265,7 @@ exports.getKpiSummary = async (req, res) => {
           AND (ba.dateOfDischarge IS NULL OR DATE(ba.dateOfDischarge) >= ?)
         GROUP BY ba.id
       ) t
-    `, [...values, start, end, end, start, end, end, start]);
+    `, [start, end, end, start, end, ...values, end, start]);
 
     // 5. Exclusive BF — status=2, discharged in period
     const [bfRows] = await pool.query(`
@@ -281,13 +283,13 @@ exports.getKpiSummary = async (req, res) => {
         FROM babyAdmission ba
         JOIN babyDailyNutrition bdn ON bdn.babyAdmissionId = ba.id
         JOIN babyRegistration br ON ba.babyId = br.babyId
-        JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
-        WHERE ${lmCondStr} AND ba.status = 2
+        ${BA_JOIN}
+        WHERE ${condStr} AND ba.status = 2
           AND ba.dateOfDischarge BETWEEN ? AND ?
           AND br.babyWeight < 2500 AND br.birthWeightAvailable = 'Yes'
         GROUP BY ba.id
       ) t
-    `, [...lmVals, startTs, endTs]);
+    `, [...values, startTs, endTs]);
 
     // 6. Weight Gain/Stable — denominator = all LBW discharged in period
     //    Babies without weight records contribute 0 to gainStable (NULL comparison → ELSE 0)
