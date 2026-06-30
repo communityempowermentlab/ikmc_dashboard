@@ -267,7 +267,7 @@ exports.getKpiSummary = async (req, res) => {
       ) t
     `, [start, end, end, start, end, ...values, end, start]);
 
-    // 5. Exclusive BF — status=2, discharged in period
+    // 5. Exclusive BF — status=2, discharged in period (denominator = all LBW discharged)
     const [bfRows] = await pool.query(`
       SELECT
         SUM(CASE WHEN non_excl = 0 AND rec_count > 0 THEN 1 ELSE 0 END) AS exclusive,
@@ -281,7 +281,7 @@ exports.getKpiSummary = async (req, res) => {
             AND bdn.breastFeedMethod NOT IN ('null', '[]', '')
             THEN 1 ELSE 0 END) AS rec_count
         FROM babyAdmission ba
-        JOIN babyDailyNutrition bdn ON bdn.babyAdmissionId = ba.id
+        LEFT JOIN babyDailyNutrition bdn ON bdn.babyAdmissionId = ba.id
         JOIN babyRegistration br ON ba.babyId = br.babyId
         ${BA_JOIN}
         WHERE ${condStr} AND ba.status = 2
@@ -476,7 +476,7 @@ exports.getFacilityMatrix = async (req, res) => {
       GROUP BY facilityId
     `, [start, end, end, start, end, facIds, end, start]);
 
-    // 5. Exclusive BF — status=2, discharged in period
+    // 5. Exclusive BF — status=2, discharged in period (denominator = all LBW discharged)
     const [bfRows] = await pool.query(`
       SELECT facilityId,
         SUM(CASE WHEN non_excl = 0 AND rec_count > 0 THEN 1 ELSE 0 END) AS exclusive,
@@ -490,9 +490,12 @@ exports.getFacilityMatrix = async (req, res) => {
             AND bdn.breastFeedMethod NOT IN ('null', '[]', '')
             THEN 1 ELSE 0 END) AS rec_count
         FROM babyAdmission ba
-        JOIN babyDailyNutrition bdn ON bdn.babyAdmissionId = ba.id ${BA_JOIN}
+        LEFT JOIN babyDailyNutrition bdn ON bdn.babyAdmissionId = ba.id
+        JOIN babyRegistration br ON ba.babyId = br.babyId
+        ${BA_JOIN}
         WHERE lm.facilityId IN (?) AND ba.status = 2
           AND ba.dateOfDischarge BETWEEN ? AND ?
+          AND br.babyWeight < 2500 AND br.birthWeightAvailable = 'Yes'
         GROUP BY lm.facilityId, ba.id
       ) t
       GROUP BY facilityId
