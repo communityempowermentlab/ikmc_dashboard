@@ -1320,8 +1320,8 @@ GROUP  BY ba.typeOfBorn, ba.babyTransferredCondition`,
                     <DebugIcon onClick={setActiveDebugInfo} info={{
                       title: 'Mother Satisfaction',
                       sourceTable: 'motherFeedbackMasterV4, babyAdmission, loungeMaster',
-                      appliedLogic: 'Percentage of mothers who reported overall satisfaction as "बहुत अच्छा लगा" (1) or "अच्छा लगा" (2) out of all collected feedbacks in the period.',
-                      queryLogic: `SELECT SUM(CASE WHEN mfb.stayDays IN (1, 2) THEN 1 ELSE 0 END) AS satisfiedMothers,
+                      appliedLogic: 'Percentage of mothers who recommended the facility (recommend = 1) out of all collected feedbacks in the period.',
+                      queryLogic: `SELECT SUM(CASE WHEN mfb.recommend = 1 THEN 1 ELSE 0 END) AS satisfiedMothers,
               COUNT(mfb.id) AS totalFeedbacks
             FROM motherFeedbackMasterV4 mfb
             JOIN babyAdmission ba ON mfb.motherId = ba.id

@@ -115,7 +115,7 @@ exports.getAdmissionKpi = async (req, res) => {
 
         const satQuery = `
             SELECT
-              SUM(CASE WHEN mfb.stayDays IN (1, 2) THEN 1 ELSE 0 END) AS satisfiedMothers,
+              SUM(CASE WHEN mfb.recommend = 1 THEN 1 ELSE 0 END) AS satisfiedMothers,
               COUNT(mfb.id) AS totalFeedbacks
             FROM motherFeedbackMasterV4 mfb
             JOIN babyAdmission ba ON mfb.motherId = ba.id

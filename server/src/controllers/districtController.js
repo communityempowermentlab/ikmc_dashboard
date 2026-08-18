@@ -341,7 +341,7 @@ exports.getKpiSummary = async (req, res) => {
     // 9. Mother Satisfaction
     const [satRows] = await pool.query(`
       SELECT
-        SUM(CASE WHEN mfb.stayDays IN (1, 2) THEN 1 ELSE 0 END) AS satisfiedMothers,
+        SUM(CASE WHEN mfb.recommend = 1 THEN 1 ELSE 0 END) AS satisfiedMothers,
         COUNT(mfb.id) AS totalFeedbacks
       FROM motherFeedbackMasterV4 mfb
       JOIN babyAdmission ba ON mfb.motherId = ba.id
@@ -595,7 +595,7 @@ exports.getFacilityMatrix = async (req, res) => {
     // 9. Mother Satisfaction per facility
     const [satRows] = await pool.query(`
       SELECT lm.facilityId,
-        SUM(CASE WHEN mfb.stayDays IN (1, 2) THEN 1 ELSE 0 END) AS satisfiedMothers,
+        SUM(CASE WHEN mfb.recommend = 1 THEN 1 ELSE 0 END) AS satisfiedMothers,
         COUNT(mfb.id) AS totalFeedbacks
       FROM motherFeedbackMasterV4 mfb
       JOIN babyAdmission ba ON mfb.motherId = ba.id
