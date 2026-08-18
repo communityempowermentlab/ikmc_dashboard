@@ -324,16 +324,16 @@ exports.getKpiSummary = async (req, res) => {
     // 8. Avg Per Day KMC Hrs
     const [kmcRows] = await pool.query(`
       SELECT
-        COUNT(DISTINCT CONCAT(bdk.babyAdmissionId, '-', bdk.kmcDate)) AS babyDays,
         SUM(
           COALESCE(TIME_TO_SEC(CAST(bdk.kmcDurationByMother AS TIME)), 0) +
           COALESCE(TIME_TO_SEC(CAST(bdk.kmcDurationByOther  AS TIME)), 0)
-        ) / 3600 AS totalKmcHours
+        ) / 3600 AS totalKmcHours,
+        COUNT(DISTINCT bdk.babyAdmissionId, bdk.kmcDate) AS babyDays
       FROM babyDailyKMC bdk
       JOIN babyAdmission ba ON bdk.babyAdmissionId = ba.id
       ${BA_JOIN}
       WHERE ${condStr} AND ba.status IN (1, 2)
-        AND DATE(bdk.kmcDate) BETWEEN ? AND ?
+        AND bdk.kmcDate BETWEEN ? AND ?
         AND (bdk.kmcDurationByMother IS NOT NULL AND bdk.kmcDurationByMother != ''
           OR bdk.kmcDurationByOther  IS NOT NULL AND bdk.kmcDurationByOther  != '')
     `, [...values, start, end]);

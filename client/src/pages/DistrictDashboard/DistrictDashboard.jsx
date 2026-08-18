@@ -835,8 +835,8 @@ WHERE f.Status = 1 AND lm.status = 1 AND lm.phase > 0
             onDebug={setActiveDebugInfo} debugInfo={{
               title: 'Mother Satisfaction',
               sourceTable: 'motherFeedbackMasterV4, motherAdmission, loungeMaster, facilitylist',
-              appliedLogic: 'Percentage of mothers who reported overall satisfaction as "बहुत अच्छा लगा" (1) or "अच्छा लगा" (2) out of all collected feedbacks in the period.',
-              queryLogic: `SELECT SUM(CASE WHEN mfb.stayDays IN (1, 2) THEN 1 ELSE 0 END) AS satisfiedMothers,
+              appliedLogic: 'Percentage of mothers who reported overall satisfaction (recommend = 1) out of all collected feedbacks in the period.',
+              queryLogic: `SELECT SUM(CASE WHEN mfb.recommend = 1 THEN 1 ELSE 0 END) AS satisfiedMothers,
        COUNT(mfb.id) AS totalFeedbacks
 FROM motherFeedbackMasterV4 mfb
 JOIN babyAdmission ba ON mfb.motherId = ba.id

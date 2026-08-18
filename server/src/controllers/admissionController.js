@@ -103,12 +103,12 @@ exports.getAdmissionKpi = async (req, res) => {
               CAST(IFNULL(NULLIF(bdk.kmcDurationByMother, ''), 0) AS UNSIGNED) +
               CAST(IFNULL(NULLIF(bdk.kmcDurationByOther, ''), 0) AS UNSIGNED)
             ) AS totalSecs,
-            COUNT(DISTINCT bdk.babyAdmissionId, bdk.date) as distinctBabyDays
+            COUNT(DISTINCT bdk.babyAdmissionId, bdk.kmcDate) as distinctBabyDays
             FROM babyDailyKMC bdk
             JOIN babyAdmission ba ON bdk.babyAdmissionId = ba.id
             JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
             WHERE ${baseCond}
-              AND bdk.date BETWEEN ? AND ?
+              AND bdk.kmcDate BETWEEN ? AND ?
               AND (bdk.kmcDurationByMother IS NOT NULL AND bdk.kmcDurationByMother != ''
                 OR bdk.kmcDurationByOther  IS NOT NULL AND bdk.kmcDurationByOther  != '')
         `;
