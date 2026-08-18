@@ -303,7 +303,7 @@
 .dashboard-container .kpi.green::before { background: var(--green-bar); }
 .dashboard-container .kpi.amber::before { background: var(--amber-bar); }
 .dashboard-container .kpi.red::before { background: var(--red-bar); }
-.dashboard-container .kpi-label { font-size: 13px; color: var(--text-secondary); line-height: 1.3; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; }
+.dashboard-container .kpi-label { font-size: 15px; font-weight: 600; color: var(--text-secondary); line-height: 1.3; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between; }
 .dashboard-container .kpi-val { font-size: 24px; font-weight: 600; color: var(--text-primary); line-height: 1; font-family: var(--mono); }
 .dashboard-container .kpi-trend {
   font-size: 12.5px;
@@ -1644,7 +1644,7 @@
   .dashboard-container .kpi-grid { grid-template-columns: repeat(7, 1fr) !important; gap: 4px !important; }
   .dashboard-container .kpi-card { padding: 5px 8px !important; break-inside: avoid !important; }
   .dashboard-container .kpi-val  { font-size: 16px !important; line-height: 1 !important; }
-  .dashboard-container .kpi-label { font-size: 7.5px !important; }
+  .dashboard-container .kpi-label, .dashboard-container .nurse-kpi-label { font-size: 15px !important; font-weight: 600 !important; }
   .dashboard-container .kpi-sub   { font-size: 7px !important; }
   .dashboard-container .kpi-shimmer, .dashboard-container .kpi-trend { display: none !important; }
 
@@ -2116,7 +2116,7 @@
 }
 
 .dashboard-container .nurse-kpi-label {
-  font-size: 11px;
+  font-size: 15px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;

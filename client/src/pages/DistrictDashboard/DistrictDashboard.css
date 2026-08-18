@@ -439,7 +439,7 @@
 .dd-kpi-unit { font-size: 11px; color: var(--dd-muted); margin-bottom: 4px; }
 .dd-kpi-sub  { font-size: 11px; color: var(--dd-muted); margin-bottom: 4px; line-height: 1.35; }
 .dd-kpi-label {
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--dd-muted);
   display: flex;
@@ -817,7 +817,7 @@ thead .dd-sticky-col { z-index: 3; background: #f8fafc !important; }
   .dd-kpi-accent-bar { flex-shrink: 0; }
   .dd-kpi-body    { padding: 10px 12px; }
   .dd-kpi-val     { font-size: 22px !important; margin-bottom: 2px; }
-  .dd-kpi-label   { font-size: 10px !important; margin-bottom: 4px; }
+  .dd-kpi-label   { font-size: 12px !important; margin-bottom: 4px; }
   .dd-kpi-unit,
   .dd-kpi-sub     { font-size: 9px !important; margin-bottom: 3px; }
   .dd-kpi-shimmer { display: none; }
