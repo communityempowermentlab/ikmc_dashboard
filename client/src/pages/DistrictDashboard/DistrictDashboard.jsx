@@ -828,15 +828,22 @@ WHERE f.Status = 1 AND lm.status = 1 AND lm.phase > 0
     OR bdk.kmcDurationByOther  IS NOT NULL AND bdk.kmcDurationByOther  != '')`,
             }} />
 
-          {/* Mother Satisfaction — STATIC FOR NOW */}
-          <KpiCard label="Mother Satisfaction" icon={<KpiIcon emoji="😊" />} value="95" unit="%"
-            sub="Static prototype"
-            accent="#10b981" loading={false}
+          {/* Mother Satisfaction */}
+          <KpiCard label="Mother Satisfaction" icon={<KpiIcon emoji="😊" />} 
+            value={k.satPct != null ? k.satPct : '—'} unit="%"
+            accent="#10b981" loading={loading.kpis}
             onDebug={setActiveDebugInfo} debugInfo={{
               title: 'Mother Satisfaction',
-              sourceTable: 'Pending',
-              appliedLogic: 'Pending dynamic implementation',
-              queryLogic: 'Pending dynamic implementation',
+              sourceTable: 'motherFeedbackMasterV4, motherAdmission, loungeMaster, facilitylist',
+              appliedLogic: 'Percentage of mothers who reported overall satisfaction as "बहुत अच्छा लगा" (1) or "अच्छा लगा" (2) out of all collected feedbacks in the period.',
+              queryLogic: `SELECT SUM(CASE WHEN mfb.overallSatisfaction IN (1, 2) THEN 1 ELSE 0 END) AS satisfiedMothers,
+       COUNT(mfb.id) AS totalFeedbacks
+FROM motherFeedbackMasterV4 mfb
+JOIN motherAdmission ma ON mfb.motherId = ma.motherId
+JOIN loungeMaster lm ON ma.loungeId = lm.loungeId
+JOIN facilitylist f ON lm.facilityId = f.FacilityID
+WHERE f.Status = 1 AND lm.status = 1 AND lm.phase > 0
+  AND DATE(mfb.dateOfCall) BETWEEN :startDate AND :endDate`,
             }} />
 
         </section>
@@ -1056,7 +1063,7 @@ GROUP BY facilityId`,
                         <td className="dd-td-kpi">{fac.gsPct  != null ? `${fac.gsPct}%`  : '—'}</td>
                         <td className="dd-td-kpi">{fac.assessed}</td>
                         <td className="dd-td-kpi">{fac.avgKmcHrs != null ? fac.avgKmcHrs : '—'}</td>
-                        <td className="dd-td-kpi">—</td>
+                        <td className="dd-td-kpi">{fac.satPct != null ? `${fac.satPct}%` : '—'}</td>
                       </tr>
                     ))}
                   </tbody>
