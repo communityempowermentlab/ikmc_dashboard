@@ -836,7 +836,7 @@ WHERE f.Status = 1 AND lm.status = 1 AND lm.phase > 0
               title: 'Mother Satisfaction',
               sourceTable: 'motherFeedbackMasterV4, motherAdmission, loungeMaster, facilitylist',
               appliedLogic: 'Percentage of mothers who reported overall satisfaction as "बहुत अच्छा लगा" (1) or "अच्छा लगा" (2) out of all collected feedbacks in the period.',
-              queryLogic: `SELECT SUM(CASE WHEN mfb.overallSatisfaction IN (1, 2) THEN 1 ELSE 0 END) AS satisfiedMothers,
+              queryLogic: `SELECT SUM(CASE WHEN mfb.confidanceInKmc IN (1, 2) THEN 1 ELSE 0 END) AS satisfiedMothers,
        COUNT(mfb.id) AS totalFeedbacks
 FROM motherFeedbackMasterV4 mfb
 JOIN motherAdmission ma ON mfb.motherId = ma.motherId

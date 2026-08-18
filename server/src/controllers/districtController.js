@@ -338,10 +338,10 @@ exports.getKpiSummary = async (req, res) => {
           OR bdk.kmcDurationByOther  IS NOT NULL AND bdk.kmcDurationByOther  != '')
     `, [...values, start, end]);
 
-    // 9. Mother Satisfaction
+    // 9. Mother Satisfaction (Temporary Hotfix column)
     const [satRows] = await pool.query(`
       SELECT
-        SUM(CASE WHEN mfb.overallSatisfaction IN (1, 2) THEN 1 ELSE 0 END) AS satisfiedMothers,
+        SUM(CASE WHEN mfb.confidanceInKmc IN (1, 2) THEN 1 ELSE 0 END) AS satisfiedMothers,
         COUNT(mfb.id) AS totalFeedbacks
       FROM motherFeedbackMasterV4 mfb
       JOIN motherAdmission ma ON mfb.motherId = ma.motherId
@@ -592,10 +592,10 @@ exports.getFacilityMatrix = async (req, res) => {
       GROUP BY lm.facilityId
     `, [facIds, start, end]);
 
-    // 9. Mother Satisfaction per facility
+    // 9. Mother Satisfaction per facility (Temporary Hotfix column)
     const [satRows] = await pool.query(`
       SELECT lm.facilityId,
-        SUM(CASE WHEN mfb.overallSatisfaction IN (1, 2) THEN 1 ELSE 0 END) AS satisfiedMothers,
+        SUM(CASE WHEN mfb.confidanceInKmc IN (1, 2) THEN 1 ELSE 0 END) AS satisfiedMothers,
         COUNT(mfb.id) AS totalFeedbacks
       FROM motherFeedbackMasterV4 mfb
       JOIN motherAdmission ma ON mfb.motherId = ma.motherId
