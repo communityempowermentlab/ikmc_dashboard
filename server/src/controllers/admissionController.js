@@ -100,8 +100,8 @@ exports.getAdmissionKpi = async (req, res) => {
 
         const kmcQuery = `
             SELECT SUM(
-              CAST(IFNULL(NULLIF(bdk.kmcDurationByMother, ''), 0) AS UNSIGNED) +
-              CAST(IFNULL(NULLIF(bdk.kmcDurationByOther, ''), 0) AS UNSIGNED)
+              COALESCE(TIME_TO_SEC(CAST(bdk.kmcDurationByMother AS TIME)), 0) +
+              COALESCE(TIME_TO_SEC(CAST(bdk.kmcDurationByOther  AS TIME)), 0)
             ) AS totalSecs,
             COUNT(DISTINCT bdk.babyAdmissionId, bdk.kmcDate) as distinctBabyDays
             FROM babyDailyKMC bdk
