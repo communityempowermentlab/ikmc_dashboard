@@ -338,14 +338,14 @@ exports.getKpiSummary = async (req, res) => {
           OR bdk.kmcDurationByOther  IS NOT NULL AND bdk.kmcDurationByOther  != '')
     `, [...values, start, end]);
 
-    // 9. Mother Satisfaction (Temporary Hotfix column)
+    // 9. Mother Satisfaction
     const [satRows] = await pool.query(`
       SELECT
-        SUM(CASE WHEN mfb.confidanceInKmc IN (1, 2) THEN 1 ELSE 0 END) AS satisfiedMothers,
+        SUM(CASE WHEN mfb.stayDays IN (1, 2) THEN 1 ELSE 0 END) AS satisfiedMothers,
         COUNT(mfb.id) AS totalFeedbacks
       FROM motherFeedbackMasterV4 mfb
-      JOIN motherAdmission ma ON mfb.motherId = ma.motherId
-      JOIN loungeMaster lm ON ma.loungeId = lm.loungeId
+      JOIN babyAdmission ba ON mfb.motherId = ba.id
+      JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
       JOIN facilitylist f ON lm.facilityId = f.FacilityID
       WHERE ${condStr}
         AND DATE(mfb.dateOfCall) BETWEEN ? AND ?
@@ -592,14 +592,14 @@ exports.getFacilityMatrix = async (req, res) => {
       GROUP BY lm.facilityId
     `, [facIds, start, end]);
 
-    // 9. Mother Satisfaction per facility (Temporary Hotfix column)
+    // 9. Mother Satisfaction per facility
     const [satRows] = await pool.query(`
       SELECT lm.facilityId,
-        SUM(CASE WHEN mfb.confidanceInKmc IN (1, 2) THEN 1 ELSE 0 END) AS satisfiedMothers,
+        SUM(CASE WHEN mfb.stayDays IN (1, 2) THEN 1 ELSE 0 END) AS satisfiedMothers,
         COUNT(mfb.id) AS totalFeedbacks
       FROM motherFeedbackMasterV4 mfb
-      JOIN motherAdmission ma ON mfb.motherId = ma.motherId
-      JOIN loungeMaster lm ON ma.loungeId = lm.loungeId AND lm.phase > 0
+      JOIN babyAdmission ba ON mfb.motherId = ba.id
+      JOIN loungeMaster lm ON ba.loungeId = lm.loungeId AND lm.phase > 0
       WHERE lm.facilityId IN (?)
         AND DATE(mfb.dateOfCall) BETWEEN ? AND ?
       GROUP BY lm.facilityId
