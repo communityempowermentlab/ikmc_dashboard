@@ -1282,6 +1282,39 @@ GROUP  BY ba.typeOfBorn, ba.babyTransferredCondition`,
                     </div>
                   );
                 })()}
+                
+                {/* Avg Per Day KMC Hrs — STATIC FOR NOW */}
+                <div className="kpi amber">
+                  <div className="kpi-label">
+                    Avg Per Day KMC Hrs
+                    <DebugIcon onClick={setActiveDebugInfo} info={{
+                      title: 'Avg Per Day KMC Hrs',
+                      sourceTable: 'Pending',
+                      appliedLogic: 'Pending dynamic implementation',
+                      queryLogic: 'Pending dynamic implementation',
+                    }} />
+                  </div>
+                  <div className="kpi-val">10.5<span style={{fontSize:'14px',fontWeight:400}}> hrs</span></div>
+                  <div className="kpi-trend trend-neu">Static prototype</div>
+                  <div className="kpi-icon-right"><KpiIcon emoji="🕒" /></div>
+                </div>
+
+                {/* Mother Satisfaction — STATIC FOR NOW */}
+                <div className="kpi green">
+                  <div className="kpi-label">
+                    Mother Satisfaction
+                    <DebugIcon onClick={setActiveDebugInfo} info={{
+                      title: 'Mother Satisfaction',
+                      sourceTable: 'Pending',
+                      appliedLogic: 'Pending dynamic implementation',
+                      queryLogic: 'Pending dynamic implementation',
+                    }} />
+                  </div>
+                  <div className="kpi-val">95<span style={{fontSize:'14px',fontWeight:400}}>%</span></div>
+                  <div className="kpi-trend trend-up">Static prototype</div>
+                  <div className="kpi-icon-right"><KpiIcon emoji="😊" /></div>
+                </div>
+
               </div>
             </div>}
 

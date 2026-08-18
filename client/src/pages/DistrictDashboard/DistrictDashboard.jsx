@@ -804,6 +804,41 @@ FROM (
               ],
             }} />
 
+          {/* Avg Per Day KMC Hrs */}
+          <KpiCard label="Avg Per Day KMC Hrs" icon={<KpiIcon emoji="🕒" />} 
+            value={k.avgKmcHrs != null ? k.avgKmcHrs : '—'} unit="hrs"
+            accent="#fbbf24" loading={loading.kpis}
+            onDebug={setActiveDebugInfo} debugInfo={{
+              title: 'Avg Per Day KMC Hrs',
+              sourceTable: 'babyDailyKMC, babyAdmission, loungeMaster, facilitylist',
+              appliedLogic: 'Average KMC duration per baby per day across all active facilities in the selected period. Total KMC duration (mother + other) is summed up and divided by the distinct number of baby-days.',
+              queryLogic: `SELECT COUNT(DISTINCT CONCAT(bdk.babyAdmissionId, '-', bdk.kmcDate)) AS babyDays,
+       SUM(
+         COALESCE(TIME_TO_SEC(CAST(bdk.kmcDurationByMother AS TIME)), 0) +
+         COALESCE(TIME_TO_SEC(CAST(bdk.kmcDurationByOther  AS TIME)), 0)
+       ) / 3600 AS totalKmcHours
+FROM babyDailyKMC bdk
+JOIN babyAdmission ba ON bdk.babyAdmissionId = ba.id
+JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
+JOIN facilitylist f ON lm.facilityId = f.FacilityID
+WHERE f.Status = 1 AND lm.status = 1 AND lm.phase > 0
+  AND ba.status IN (1, 2)
+  AND DATE(bdk.kmcDate) BETWEEN :startDate AND :endDate
+  AND (bdk.kmcDurationByMother IS NOT NULL AND bdk.kmcDurationByMother != ''
+    OR bdk.kmcDurationByOther  IS NOT NULL AND bdk.kmcDurationByOther  != '')`,
+            }} />
+
+          {/* Mother Satisfaction — STATIC FOR NOW */}
+          <KpiCard label="Mother Satisfaction" icon={<KpiIcon emoji="😊" />} value="95" unit="%"
+            sub="Static prototype"
+            accent="#10b981" loading={false}
+            onDebug={setActiveDebugInfo} debugInfo={{
+              title: 'Mother Satisfaction',
+              sourceTable: 'Pending',
+              appliedLogic: 'Pending dynamic implementation',
+              queryLogic: 'Pending dynamic implementation',
+            }} />
+
         </section>
 
         {/* ── Facility Matrix ─────────────────────────────────────────────── */}
@@ -989,6 +1024,8 @@ GROUP BY facilityId`,
                       <th className="dd-th-kpi">Exclusive Breastfeeding</th>
                       <th className="dd-th-kpi">Weight Gain / Stable</th>
                       <th className="dd-th-kpi">Baby Assessment</th>
+                      <th className="dd-th-kpi">Avg Per Day KMC Hrs</th>
+                      <th className="dd-th-kpi">Mother Satisfaction</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1018,6 +1055,8 @@ GROUP BY facilityId`,
                         <td className="dd-td-kpi">{fac.bfPct  != null ? `${fac.bfPct}%`  : '—'}</td>
                         <td className="dd-td-kpi">{fac.gsPct  != null ? `${fac.gsPct}%`  : '—'}</td>
                         <td className="dd-td-kpi">{fac.assessed}</td>
+                        <td className="dd-td-kpi">{fac.avgKmcHrs != null ? fac.avgKmcHrs : '—'}</td>
+                        <td className="dd-td-kpi">—</td>
                       </tr>
                     ))}
                   </tbody>

@@ -321,6 +321,23 @@ exports.getKpiSummary = async (req, res) => {
         AND ma.addDate BETWEEN ? AND ?
     `, [...values, startTs, endTs]);
 
+    // 8. Avg Per Day KMC Hrs
+    const [kmcRows] = await pool.query(`
+      SELECT
+        COUNT(DISTINCT CONCAT(bdk.babyAdmissionId, '-', bdk.kmcDate)) AS babyDays,
+        SUM(
+          COALESCE(TIME_TO_SEC(CAST(bdk.kmcDurationByMother AS TIME)), 0) +
+          COALESCE(TIME_TO_SEC(CAST(bdk.kmcDurationByOther  AS TIME)), 0)
+        ) / 3600 AS totalKmcHours
+      FROM babyDailyKMC bdk
+      JOIN babyAdmission ba ON bdk.babyAdmissionId = ba.id
+      ${BA_JOIN}
+      WHERE ${condStr} AND ba.status IN (1, 2)
+        AND DATE(bdk.kmcDate) BETWEEN ? AND ?
+        AND (bdk.kmcDurationByMother IS NOT NULL AND bdk.kmcDurationByMother != ''
+          OR bdk.kmcDurationByOther  IS NOT NULL AND bdk.kmcDurationByOther  != '')
+    `, [...values, start, end]);
+
     const lbw      = { lbwAdmitted: lbwAdmRows[0].lbwAdmitted, lbwDischarged: lbwDisRows[0].lbwDischarged };
     const stay     = { stay48: stay48Rows[0].stay48, stayEligible: stayEligRows[0].stayEligible };
     const bf       = bfRows[0];
@@ -332,6 +349,11 @@ exports.getKpiSummary = async (req, res) => {
     const bfTot         = n(bf.bfTotal);
     const gainSt        = n(ws.gainStable);
     const wsTot         = n(ws.wsTotal);
+    
+    const kmc           = kmcRows[0];
+    const babyDays      = n(kmc.babyDays);
+    const totalKmcHrs   = n(kmc.totalKmcHours);
+    const avgKmcHrs     = babyDays > 0 ? Number((totalKmcHrs / babyDays).toFixed(1)) : null;
 
     res.json({
       period: { start, end, totalDays },
@@ -356,6 +378,7 @@ exports.getKpiSummary = async (req, res) => {
         babyAssessed:   n(assessRows[0].assessed),
         assessTotal:    n(assessRows[0].assessTotal),
         totalMothers:   n(moRows[0].totalMothers),
+        avgKmcHrs:      avgKmcHrs,
       },
     });
   } catch (err) {
@@ -532,6 +555,24 @@ exports.getFacilityMatrix = async (req, res) => {
       GROUP BY lm.facilityId
     `, [facIds, startTs, endTs]);
 
+    // 8. Avg Per Day KMC Hrs per facility
+    const [kmcRows] = await pool.query(`
+      SELECT lm.facilityId,
+        COUNT(DISTINCT CONCAT(bdk.babyAdmissionId, '-', bdk.kmcDate)) AS babyDays,
+        SUM(
+          COALESCE(TIME_TO_SEC(CAST(bdk.kmcDurationByMother AS TIME)), 0) +
+          COALESCE(TIME_TO_SEC(CAST(bdk.kmcDurationByOther  AS TIME)), 0)
+        ) / 3600 AS totalKmcHours
+      FROM babyDailyKMC bdk
+      JOIN babyAdmission ba ON bdk.babyAdmissionId = ba.id
+      ${BA_JOIN}
+      WHERE lm.facilityId IN (?) AND ba.status IN (1, 2)
+        AND DATE(bdk.kmcDate) BETWEEN ? AND ?
+        AND (bdk.kmcDurationByMother IS NOT NULL AND bdk.kmcDurationByMother != ''
+          OR bdk.kmcDurationByOther  IS NOT NULL AND bdk.kmcDurationByOther  != '')
+      GROUP BY lm.facilityId
+    `, [facIds, start, end]);
+
     // Build lookup maps
     const appMap = {};
     appRows.forEach(r => {
@@ -546,6 +587,7 @@ exports.getFacilityMatrix = async (req, res) => {
     const bfMap     = toMap(bfRows);
     const wsMap     = toMap(wsRows);
     const moMap     = toMap(moRows);
+    const kmcMap    = toMap(kmcRows);
 
     const matrix = facilities.map(fac => {
       const fid         = fac.id;
@@ -557,15 +599,20 @@ exports.getFacilityMatrix = async (req, res) => {
       const bf          = bfMap[fid]    || {};
       const ws          = wsMap[fid]    || {};
       const mo          = moMap[fid]    || {};
+      const kmc         = kmcMap[fid]   || {};
       const excl        = n(bf.exclusive);
       const bfTot       = n(bf.bfTotal);
       const gainSt      = n(ws.gainStable);
       const wsTot       = n(ws.wsTotal);
       const stay48      = n(st.stay48);
       const stayElig    = n(st.stayEligible);
+      const bDays       = n(kmc.babyDays);
+      const tKmcHrs     = n(kmc.totalKmcHours);
+      
       const bfPct       = bfTot    > 0 ? Math.round((excl   / bfTot)    * 100) : null;
       const gsPct       = wsTot    > 0 ? Math.round((gainSt / wsTot)    * 100) : null;
       const stay48Pct   = stayElig > 0 ? Math.round((stay48 / stayElig) * 100) : null;
+      const avgKmcHrs   = bDays    > 0 ? Number((tKmcHrs / bDays).toFixed(1)) : null;
       return {
         ...fac,
         appUseDays:    appDays.size,
@@ -586,6 +633,7 @@ exports.getFacilityMatrix = async (req, res) => {
         wsTotal:       wsTot,
         gsPct,
         totalMothers:  n(mo.totalMothers),
+        avgKmcHrs,
       };
     });
 
