@@ -1283,35 +1283,60 @@ GROUP  BY ba.typeOfBorn, ba.babyTransferredCondition`,
                   );
                 })()}
                 
-                {/* Avg Per Day KMC Hrs — STATIC FOR NOW */}
+                {/* Avg Per Day KMC Hrs */}
                 <div className="kpi amber">
                   <div className="kpi-label">
                     Avg Per Day KMC Hrs
                     <DebugIcon onClick={setActiveDebugInfo} info={{
                       title: 'Avg Per Day KMC Hrs',
-                      sourceTable: 'Pending',
-                      appliedLogic: 'Pending dynamic implementation',
-                      queryLogic: 'Pending dynamic implementation',
+                      sourceTable: 'babyDailyKMC, babyAdmission, loungeMaster',
+                      appliedLogic: 'Sum of mother & other KMC durations divided by distinct baby KMC days.',
+                      queryLogic: `SELECT SUM(
+              CAST(IFNULL(NULLIF(bdk.kmcDurationByMother, ''), 0) AS UNSIGNED) +
+              CAST(IFNULL(NULLIF(bdk.kmcDurationByOther, ''), 0) AS UNSIGNED)
+            ) AS totalSecs,
+            COUNT(DISTINCT bdk.babyAdmissionId, bdk.date) as distinctBabyDays
+            FROM babyDailyKMC bdk
+            JOIN babyAdmission ba ON bdk.babyAdmissionId = ba.id
+            JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
+            WHERE lm.facilityId IN (:facilityIds)
+              AND bdk.date BETWEEN :startDate AND :endDate`,
                     }} />
                   </div>
-                  <div className="kpi-val">10.5<span style={{fontSize:'14px',fontWeight:400}}> hrs</span></div>
-                  <div className="kpi-trend trend-neu">Static prototype</div>
+                  {admLoading.kpi ? (
+                    <div className="kpi-val adm-loading">—</div>
+                  ) : (
+                    <>
+                      <div className="kpi-val">{admKpi?.avgKmcHrs != null ? admKpi.avgKmcHrs : '—'}<span style={{fontSize:'14px',fontWeight:400}}> hrs</span></div>
+                    </>
+                  )}
                   <div className="kpi-icon-right"><KpiIcon emoji="🕒" /></div>
                 </div>
 
-                {/* Mother Satisfaction — STATIC FOR NOW */}
+                {/* Mother Satisfaction */}
                 <div className="kpi green">
                   <div className="kpi-label">
                     Mother Satisfaction
                     <DebugIcon onClick={setActiveDebugInfo} info={{
                       title: 'Mother Satisfaction',
-                      sourceTable: 'Pending',
-                      appliedLogic: 'Pending dynamic implementation',
-                      queryLogic: 'Pending dynamic implementation',
+                      sourceTable: 'motherFeedbackMasterV4, babyAdmission, loungeMaster',
+                      appliedLogic: 'Percentage of mothers who reported overall satisfaction as "बहुत अच्छा लगा" (1) or "अच्छा लगा" (2) out of all collected feedbacks in the period.',
+                      queryLogic: `SELECT SUM(CASE WHEN mfb.stayDays IN (1, 2) THEN 1 ELSE 0 END) AS satisfiedMothers,
+              COUNT(mfb.id) AS totalFeedbacks
+            FROM motherFeedbackMasterV4 mfb
+            JOIN babyAdmission ba ON mfb.motherId = ba.id
+            JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
+            WHERE lm.facilityId IN (:facilityIds)
+              AND DATE(mfb.dateOfCall) BETWEEN :startDate AND :endDate`,
                     }} />
                   </div>
-                  <div className="kpi-val">95<span style={{fontSize:'14px',fontWeight:400}}>%</span></div>
-                  <div className="kpi-trend trend-up">Static prototype</div>
+                  {admLoading.kpi ? (
+                    <div className="kpi-val adm-loading">—</div>
+                  ) : (
+                    <>
+                      <div className="kpi-val">{admKpi?.satPct != null ? admKpi.satPct : '—'}<span style={{fontSize:'14px',fontWeight:400}}>%</span></div>
+                    </>
+                  )}
                   <div className="kpi-icon-right"><KpiIcon emoji="😊" /></div>
                 </div>
 

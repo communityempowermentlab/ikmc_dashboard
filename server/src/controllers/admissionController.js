@@ -89,10 +89,61 @@ exports.getAdmissionKpi = async (req, res) => {
         const curr = buildQuery(startDate, endDate);
         const prev = buildQuery(prevStartDate, prevEndDate);
 
-        const [[currRows], [prevRows]] = await Promise.all([
+        const { clause: fClause, params: fParams } = buildFacilityClause(facilityIds);
+        const lClause = buildLoungeClause(loungeIds);
+        let baseCond = fClause;
+        let baseParams = [...fParams];
+        if (lClause) {
+            baseCond += ` AND ${lClause.clause}`;
+            baseParams.push(...lClause.params);
+        }
+
+        const kmcQuery = `
+            SELECT SUM(
+              CAST(IFNULL(NULLIF(bdk.kmcDurationByMother, ''), 0) AS UNSIGNED) +
+              CAST(IFNULL(NULLIF(bdk.kmcDurationByOther, ''), 0) AS UNSIGNED)
+            ) AS totalSecs,
+            COUNT(DISTINCT bdk.babyAdmissionId, bdk.date) as distinctBabyDays
+            FROM babyDailyKMC bdk
+            JOIN babyAdmission ba ON bdk.babyAdmissionId = ba.id
+            JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
+            WHERE ${baseCond}
+              AND bdk.date BETWEEN ? AND ?
+              AND (bdk.kmcDurationByMother IS NOT NULL AND bdk.kmcDurationByMother != ''
+                OR bdk.kmcDurationByOther  IS NOT NULL AND bdk.kmcDurationByOther  != '')
+        `;
+
+        const satQuery = `
+            SELECT
+              SUM(CASE WHEN mfb.stayDays IN (1, 2) THEN 1 ELSE 0 END) AS satisfiedMothers,
+              COUNT(mfb.id) AS totalFeedbacks
+            FROM motherFeedbackMasterV4 mfb
+            JOIN babyAdmission ba ON mfb.motherId = ba.id
+            JOIN loungeMaster lm ON ba.loungeId = lm.loungeId
+            WHERE ${baseCond}
+              AND DATE(mfb.dateOfCall) BETWEEN ? AND ?
+        `;
+
+        const [[currRows], [prevRows], [kmcRows], [satRows]] = await Promise.all([
             pool.query(`SELECT COUNT(*) AS count FROM babyAdmission ba JOIN loungeMaster lm ON ba.loungeId = lm.loungeId WHERE ${curr.where}`, curr.p),
             pool.query(`SELECT COUNT(*) AS count FROM babyAdmission ba JOIN loungeMaster lm ON ba.loungeId = lm.loungeId WHERE ${prev.where}`, prev.p),
+            pool.query(kmcQuery, [...baseParams, startDate, endDate]),
+            pool.query(satQuery, [...baseParams, startDate, endDate]),
         ]);
+
+        let avgKmcHrs = null;
+        const totalSecs = kmcRows[0]?.totalSecs || 0;
+        const distinctBabyDays = kmcRows[0]?.distinctBabyDays || 0;
+        if (distinctBabyDays > 0) {
+            avgKmcHrs = parseFloat((totalSecs / 3600 / distinctBabyDays).toFixed(1));
+        }
+
+        let satPct = null;
+        const satM = satRows[0]?.satisfiedMothers || 0;
+        const satT = satRows[0]?.totalFeedbacks || 0;
+        if (satT > 0) {
+            satPct = Math.round((satM / satT) * 100);
+        }
 
         const current  = parseInt(currRows[0].count);
         const previous = parseInt(prevRows[0].count);
@@ -108,6 +159,8 @@ exports.getAdmissionKpi = async (req, res) => {
             current, previous,
             percentChange: parseFloat(percentChange.toFixed(1)),
             direction,
+            avgKmcHrs,
+            satPct,
             currentPeriod:  { startDate, endDate },
             previousPeriod: { startDate: prevStartDate, endDate: prevEndDate },
         });
